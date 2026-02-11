@@ -565,7 +565,9 @@ def main():
     municipios_by_region, muni_to_region, region_aliases_flat = load_places_and_map()
 
     category_terms = []
-    for terms in CATEGORIES.values():
+for terms in CATEGORIES.values():
+    for t in terms:
+        category_terms.append(normalize(t))
 
 def main():
     seen = load_json(SEEN_PATH, default={"items": {}})
