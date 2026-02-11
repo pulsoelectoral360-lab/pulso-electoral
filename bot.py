@@ -219,7 +219,64 @@ def main():
         lines.append(f"• {a['title']}\n  ({tags})\n  {a['link']}")
 
     msg = "\n".join(lines)
-    send_telegram_message(msg)
+    # ========= MODO DE EJECUCIÓN =========
+MODE = os.getenv("MODE", "ALERT").strip().upper()
+
+# baseline promedio (últimos 20 runs anteriores)
+prev = history["runs"][-21:-1]
+avg = {}
+if prev:
+    for r in prev:
+        for k, c in r.get("counts", {}).items():
+            avg[k] = avg.get(k, 0) + c
+    for k in list(avg.keys()):
+        avg[k] = avg[k] / max(1, len(prev))
+
+spikes = []
+for k, c in run_counts.items():
+    base = avg.get(k, 0.0)
+    if c >= 3 and (base == 0.0 or c >= 2 * base):
+        spikes.append((k, c, base))
+
+spikes = sorted(spikes, key=lambda x: x[1], reverse=True)[:6]
+
+# ========= ALERT MODE =========
+if MODE == "ALERT":
+    if not spikes:
+        return
+
+    lines = []
+    lines.append("🟣 Pulso Electoral — ALERTA (pico detectado)")
+    lines.append("\n🔥 Tendencias en pico:")
+    for k, c, base in spikes:
+        lines.append(f"- {k}: {c} (prom {base:.1f})")
+
+    lines.append("\n📰 Noticias nuevas:")
+    for a in new_items[:10]:
+        tags = ", ".join(a["hits"][:3])
+        lines.append(f"• {a['title']}\n  ({tags})\n  {a['link']}")
+
+    send_telegram("\n".join(lines))
+    return
+
+# ========= DAILY MODE =========
+if MODE == "DAILY":
+    last_runs = history["runs"][-96:]
+    agg = {}
+    for r in last_runs:
+        for k, c in r.get("counts", {}).items():
+            agg[k] = agg.get(k, 0) + c
+
+    top24 = sorted(agg.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    lines = []
+    lines.append("🟣 Pulso Electoral — RESUMEN DIARIO (24h)")
+    lines.append("\n📈 Top temas:")
+    for k, c in top24:
+        lines.append(f"- {k}: {c}")
+
+    send_telegram("\n".join(lines))
+    return
 
 
 if __name__ == "__main__":
