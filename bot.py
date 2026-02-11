@@ -552,8 +552,11 @@ def main():
                 for s in trends["spikes"][:5]:
                     lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
 
-            send_telegram(chat_id, "\n".join(lines))
-            continue
+            send_telegram(CHAT_ID_ANTIOQUIA, "\n".join(lines))
+send_telegram(CHAT_ID_CALDAS, "\n".join(lines))
+send_telegram(CHAT_ID_GUAJIRA, "\n".join(lines))
+send_telegram(CHAT_ID_CESAR, "\n".join(lines))
+return
 
         # MODE == ALERT
         strong_signal = bool(sp_cat or sp_place or sp_hash or (len(items) >= 3))
