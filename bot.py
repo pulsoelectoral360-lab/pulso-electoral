@@ -1,147 +1,129 @@
 import os
+import re
 import json
 import time
 import hashlib
 from datetime import datetime, timezone
+
 import requests
 import feedparser
+from bs4 import BeautifulSoup
+
+# pytrends (Google Trends)
+try:
+    from pytrends.request import TrendReq
+except Exception:
+    TrendReq = None
+
 
 # =========================
-# CONFIG
+# SECRETS
 # =========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    raise RuntimeError("Faltan secrets: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
-FEEDS = [
-    # El Tiempo (RSS oficial)
+MODE = os.getenv("MODE", "ALERT").strip().upper()  # ALERT | DAILY
+ENABLE_TRENDS = os.getenv("ENABLE_TRENDS", "1").strip() == "1"
+
+
+# =========================
+# DATA PATHS
+# =========================
+DATA_DIR = "data"
+SEEN_PATH = os.path.join(DATA_DIR, "seen.json")
+HIST_PATH = os.path.join(DATA_DIR, "history.json")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+# =========================
+# FUENTES (noticias)
+# =========================
+NEWS_FEEDS = [
     "https://www.eltiempo.com/rss/politica.xml",
     "https://www.eltiempo.com/rss/politica_gobierno.xml",
     "https://www.eltiempo.com/rss/politica_congreso.xml",
-    # Semana (RSS)
     "https://www.semana.com/arc/outboundfeeds/rss/category/politica/?outputType=xml",
 ]
 
-GOOGLE_NEWS_QUERIES = [
-    # Política / gobierno
-    "Antioquia inversión social",
-    "Antioquia infraestructura vial",
-    "Antioquia educación",
-    "Antioquia salud",
-    "Antioquia medioambiente",
-    "Caldas inversión social",
-    "Caldas infraestructura vial",
-    "Caldas educación",
-    "Caldas salud",
-    "Caldas medioambiente",
-    "Valledupar inversión social",
-    "Valledupar infraestructura vial",
-    "Valledupar educación",
-    "Valledupar salud",
-    "Valledupar inundaciones",
-    "La Guajira inversión social",
-    "La Guajira infraestructura vial",
-    "La Guajira educación",
-    "La Guajira salud",
-    "La Guajira sequía",
-    "La Guajira cambio climático",
-    # Emergencias / clima
-    "Antioquia deslizamientos",
-    "Antioquia derrumbes",
-    "Antioquia ola invernal",
-    "Caldas deslizamientos",
-    "Caldas ola invernal",
-    "Caldas inundaciones",
-    "Valledupar ola invernal",
-    "La Guajira fenómeno del niño",
-    "La Guajira fenómeno de la niña",
-]
+# Proxy de redes: Google News RSS search con site:
+SOCIAL_SITES = {
+    "X": "site:x.com",
+    "Instagram": "site:instagram.com",
+    "TikTok": "site:tiktok.com",
+    "Facebook": "site:facebook.com",
+}
 
-# ========= REGIONES + MUNICIPIOS =========
-# Para no “matar” el repo con 125 municipios de Antioquia en el código,
-# soportamos cargar una lista completa desde data/municipios.json.
-# Si existe, ese archivo manda. Si no existe, usamos un fallback razonable.
+# Regiones objetivo
+REGIONS = {
+    "antioquia": {"label": "Antioquia"},
+    "caldas": {"label": "Caldas"},
+    "la guajira": {"label": "La Guajira"},
+    "cesar": {"label": "Cesar (Valledupar)"},
+}
 
-DEFAULT_MUNICIPIOS = {
-    "antioquia": [
-        # principales + subregiones frecuentes (puedes ampliar con municipios.json)
-        "medellín", "bello", "itagüí", "envigado", "sabaneta", "la estrella", "copacabana",
-        "girardota", "barbosa", "caldas",
-        "rionegro", "la ceja", "el retiro", "guarne", "marinilla", "el santuario", "carmen de viboral",
-        "santa fe de antioquia", "sopetrán", "san jerónimo", "olaya",
-        "apartadó", "turbo", "carepa", "chigorodó", "necoclí", "arboletes",
-        "caucasia", "tarazá", "cáceres", "nechí", "el bagre", "zaragoza",
-        "segovia", "remedios", "amalfi", "yolombó",
-        "andes", "jardín", "jericó", "támesis", "urrao",
-        "sonson", "abejorral", "nariño",
+
+# =========================
+# CATEGORÍAS (diccionario)
+# =========================
+CATEGORIES = {
+    "inversion_social": [
+        "inversión social", "inversion social", "programa social", "subsidio", "transferencias",
+        "adulto mayor", "familias en acción", "familias en accion", "icbf", "pobreza",
     ],
-    "caldas": [
-        "manizales", "aguadas", "anserma", "aranzazu", "belalcázar", "chinchiná", "filadelfia",
-        "la dorada", "la merced", "manzanares", "marmato", "marquetalia", "marulanda",
-        "neira", "norcasia", "pácora", "palestina", "pensilvania", "riosucio", "risaralda",
-        "salamina", "samaná", "san josé", "supía", "victoria", "villamaría", "vitebo",
+    "inversion_privada": [
+        "inversión privada", "inversion privada", "inversiones privadas", "empresa", "empleo",
+        "industria", "comercio", "turismo", "proyecto privado", "capital privado",
     ],
-    "la guajira": [
-        "riohacha", "maicao", "uribia", "manaure", "fonseca", "san juan del cesar",
-        "barrancas", "distracción", "dibulla", "el molino", "hato nuevo", "la jagua del pilar",
-        "albania", "ureña",  # (nota: ureña es Norte de Santander; si no lo usas, elimínalo)
-        "villanueva",
+    "innovacion": [
+        "innovación", "innovacion", "tecnología", "tecnologia", "startup", "emprendimiento",
+        "i+d", "investigación", "investigacion", "transformación digital", "transformacion digital",
     ],
-    "valledupar": [
-        # Valledupar es municipio (Cesar). Si quieres más de Cesar, se puede ampliar.
-        "valledupar",
+    "venta_activos_publicos": [
+        "venta de", "enajenación", "enajenacion", "privatización", "privatizacion",
+        "concesión", "concesion", "alianza público-privada", "app",
+        "venta de entidad", "venta de empresa pública", "venta de empresa publica",
+    ],
+    "educacion": [
+        "educación", "educacion", "colegio", "escuela", "universidad", "docentes", "pae",
+        "infraestructura educativa", "infraestructura de educación", "infraestructura de educacion",
+    ],
+    "salud": [
+        "salud", "hospital", "clínica", "clinica", "urgencias", "eps", "ips",
+        "infraestructura de salud", "centro de salud", "puestos de salud",
+    ],
+    "infra_vial": [
+        "infraestructura vial", "vía", "via", "vías", "vias", "carretera", "carreteras",
+        "puente", "puentes", "peaje", "túnel", "tunel", "pavimentación", "pavimentacion",
+    ],
+    "medioambiente": [
+        "medioambiente", "ambiente", "ecosistema", "contaminación", "contaminacion",
+        "deforestación", "deforestacion", "protección", "proteccion", "residuos", "basuras",
+    ],
+    "tragedia_emergencia": [
+        "tragedia", "emergencia", "desastre", "victimas", "fallecidos", "evacuación", "evacuacion",
+    ],
+    "clima_riesgo": [
+        "cambio climático", "cambio climatico", "inundación", "inundacion", "inundaciones",
+        "sequía", "sequia", "sequías", "deslizamiento", "deslizamientos", "derrumbe", "derrumbes",
+        "ola invernal", "fenómeno del niño", "fenomeno del niño", "fenomeno del nino",
+        "fenómeno de la niña", "fenomeno de la niña", "fenomeno de la nina",
     ],
 }
 
-# Temas principales (lo que quieres monitorear)
-TOPIC_KEYWORDS = [
-    "inversión social", "inversion social",
-    "inversión privada", "inversion privada", "inversiones privadas",
-    "innovación", "innovacion",
-    "venta de entidades", "venta de empresas públicas", "venta de empresas publicas",
-    "privatización", "privatizacion",
-    "educación", "educacion",
-    "salud",
-    "infraestructura", "infraestructura vial", "vías", "vias", "carreteras", "puentes",
-    "infraestructura de salud", "hospital", "clínica", "clinica", "ips",
-    "infraestructura de educación", "colegio", "escuela", "universidad",
-    "medioambiente", "ambiente", "sostenibilidad", "sostenible",
-    "tragedia", "emergencia", "desastre",
-    "cambio climático", "cambio climatico",
-    "inundaciones", "inundación", "inundacion",
-    "sequías", "sequía", "sequia",
-    "deslizamientos", "derrumbe", "derrumbes", "deslave",
-    "ola invernal",
-    "fenómeno del niño", "fenomeno del niño", "fenomeno del nino",
-    "fenómeno de la niña", "fenomeno de la niña", "fenomeno de la nina",
-]
-
-# Extra: instituciones / contratación (si te interesa seguirlo)
+# Extras de gobierno/contratación (útil en política)
 GOV_KEYWORDS = [
     "gobernación", "gobernacion", "alcaldía", "alcaldia", "concejo", "asamblea departamental",
     "contrato", "licitación", "licitacion", "convenio", "secop", "sobrecosto",
     "procuraduría", "procuraduria", "contraloría", "contraloria", "fiscalía", "fiscalia",
 ]
 
-MODE = os.getenv("MODE", "ALERT").strip().upper()  # ALERT | DAILY
-MAX_ENTRIES_PER_FEED = int(os.getenv("MAX_ENTRIES_PER_FEED", "40"))
-SEEN_DAYS = int(os.getenv("SEEN_DAYS", "7"))
-HISTORY_RUNS = int(os.getenv("HISTORY_RUNS", "60"))
-
-# ========= TELEGRAM =========
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    raise RuntimeError("Faltan secrets: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
-
-# ========= DATA =========
-DATA_DIR = "data"
-SEEN_PATH = os.path.join(DATA_DIR, "seen.json")
-HIST_PATH = os.path.join(DATA_DIR, "history.json")
-MUNICIPIOS_PATH = os.path.join(DATA_DIR, "municipios.json")
-os.makedirs(DATA_DIR, exist_ok=True)
-
 
 # =========================
-# HELPERS
+# UTILIDADES
 # =========================
+HASHTAG_RE = re.compile(r"(#\w+)", re.UNICODE)
 
 def load_json(path, default):
     if not os.path.exists(path):
@@ -173,110 +155,153 @@ def fetch_entries(feed_url: str):
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "disable_web_page_preview": False
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "disable_web_page_preview": False}
     r = requests.post(url, json=payload, timeout=25)
     r.raise_for_status()
 
-def get_municipios():
-    """
-    Si existe data/municipios.json lo usamos.
-    Formato esperado:
-    {
-      "antioquia": ["medellín", ...],
-      "caldas": [...],
-      "la guajira": [...],
-      "valledupar": ["valledupar"]
-    }
-    """
-    data = load_json(MUNICIPIOS_PATH, default=None)
-    if isinstance(data, dict) and data:
-        # normaliza
-        out = {}
-        for k, arr in data.items():
-            out[normalize(k)] = [normalize(x) for x in (arr or []) if str(x).strip()]
-        return out
-    # fallback
-    out = {}
-    for k, arr in DEFAULT_MUNICIPIOS.items():
-        out[normalize(k)] = [normalize(x) for x in arr]
-    return out
+def extract_hashtags(text: str):
+    return [normalize(h) for h in HASHTAG_RE.findall(text or "")]
 
-def build_keywords():
-    municipios = get_municipios()
+def classify_categories(text: str):
+    text_n = normalize(text)
+    matched = []
+    for cat, terms in CATEGORIES.items():
+        for t in terms:
+            if normalize(t) in text_n:
+                matched.append(cat)
+                break
+    return matched
 
-    regions = ["antioquia", "caldas", "la guajira", "valledupar"]
-    region_terms = []
-    for r in regions:
-        region_terms.append(r)
-        for m in municipios.get(r, []):
-            region_terms.append(m)
+def build_terms_for_trends():
+    # términos “representativos” (máx 5) para Trends por límites de Google
+    return [
+        "inundaciones",
+        "sequía",
+        "infraestructura vial",
+        "salud",
+        "educación",
+    ]
 
-    # keywords finales: regiones/municipios + temas + gobierno/contratación
-    keywords = []
-    keywords.extend(region_terms)
-    keywords.extend(TOPIC_KEYWORDS)
-    keywords.extend(GOV_KEYWORDS)
+# =========================
+# MUNICIPIOS (TODOS) - automático desde Wikipedia
+# =========================
+WIKI_MUN_URLS = {
+    "antioquia": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_Antioquia",
+    "caldas": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_Caldas",
+    "la guajira": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_La_Guajira",
+    "cesar": "https://es.wikipedia.org/wiki/Anexo:Municipios_del_Cesar",
+}
 
-    # normaliza y elimina duplicados conservando orden
-    seen = set()
-    final = []
-    for k in keywords:
-        nk = normalize(k)
-        if not nk or nk in seen:
-            continue
-        seen.add(nk)
-        final.append(nk)
-    return final
+def fetch_municipios_from_wikipedia(region_key: str):
+    url = WIKI_MUN_URLS.get(region_key)
+    if not url:
+        return []
 
-def match_keywords(title: str, summary: str, keywords):
-    text = normalize(title) + " " + normalize(summary)
-    hits = [k for k in keywords if k in text]
-    return hits
+    html = requests.get(url, timeout=30).text
+    soup = BeautifulSoup(html, "lxml")
+    tables = soup.select("table.wikitable")
+
+    municipios = []
+    for tbl in tables:
+        rows = tbl.select("tr")
+        for r in rows[1:]:
+            cols = r.select("td")
+            if not cols:
+                continue
+            # normalmente el municipio está en el 1er td o tiene un <a>
+            cell = cols[0].get_text(" ", strip=True)
+            cell = normalize(cell)
+            # filtra vacíos
+            if cell and cell not in municipios:
+                municipios.append(cell)
+
+    # Algunas tablas meten textos raros; filtrado básico
+    municipios = [m for m in municipios if len(m) >= 3 and not m.startswith("nota")]
+    return municipios
+
+def get_all_place_terms():
+    # Construye un set grande: departamento + todos sus municipios
+    place_terms = set()
+    for rkey in REGIONS.keys():
+        place_terms.add(normalize(rkey))
+        municipios = fetch_municipios_from_wikipedia(rkey)
+        for m in municipios:
+            place_terms.add(normalize(m))
+    return place_terms
 
 
 # =========================
-# SOCIAL (placeholder seguro)
+# GOOGLE TRENDS (gratis)
 # =========================
-def fetch_social_trends():
+def fetch_google_trends_signals():
     """
-    IMPORTANTE:
-    - Facebook/Instagram/TikTok/X NO ofrecen "tendencias" libremente sin API/Proveedor.
-    - Aquí debes conectar APIs oficiales o un proveedor autorizado.
-    - Retorna formato:
-      [
-        {"platform": "x", "tag": "#algo", "count": 1234},
-        ...
-      ]
+    Devuelve dict con señales de aumento fuerte (si se puede).
     """
-    return []
+    signals = {"spikes": [], "raw": {}}
+    if not ENABLE_TRENDS or TrendReq is None:
+        return signals
+
+    try:
+        pytrends = TrendReq(hl="es-ES", tz=300)
+        terms = build_terms_for_trends()
+        pytrends.build_payload(terms, timeframe="now 1-d", geo="CO")
+        df = pytrends.interest_over_time()
+        if df is None or df.empty:
+            return signals
+
+        # mide "último valor vs promedio" para cada término
+        for term in terms:
+            series = df[term]
+            last = float(series.iloc[-1])
+            avg = float(series.mean()) if float(series.mean()) > 0 else 0.0
+            signals["raw"][term] = {"last": last, "avg": avg}
+            if last >= 2 * avg and last >= 20:
+                signals["spikes"].append({"term": term, "last": last, "avg": avg})
+    except Exception:
+        # si falla Trends, no tumba el bot
+        return signals
+
+    return signals
 
 
 # =========================
-# MAIN
+# CORE
 # =========================
 def main():
-    keywords = build_keywords()
-
-    seen = load_json(SEEN_PATH, default={"items": {}, "last_cleanup": 0})
+    # Persistencia
+    seen = load_json(SEEN_PATH, default={"items": {}})
     history = load_json(HIST_PATH, default={"runs": []})
 
-    # Construir feeds Google News por queries
-    feeds = list(FEEDS)
-    for q in GOOGLE_NEWS_QUERIES:
-        feeds.append(google_news_rss_url(q))
+    place_terms = get_all_place_terms()
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    run_counts = {}   # keyword -> count
-    new_items = []    # items nuevos detectados
+    # Keywords generales = lugares + gobierno + términos de categorías (flatten)
+    category_terms = []
+    for terms in CATEGORIES.values():
+        category_terms.extend([normalize(t) for t in terms])
+    keywords = list(place_terms) + [normalize(k) for k in GOV_KEYWORDS] + category_terms
 
-    # Escaneo RSS
-    for feed in feeds:
-        entries = fetch_entries(feed)
-        for e in entries[:MAX_ENTRIES_PER_FEED]:
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Conteos del run
+    counts_keyword = {}
+    counts_category = {}
+    counts_place = {}
+    counts_hashtag = {}
+    new_items = []  # “novedades” (news + proxy social)
+
+    def register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords):
+        for k in hit_keywords:
+            counts_keyword[k] = counts_keyword.get(k, 0) + 1
+        for c in hit_cats:
+            counts_category[c] = counts_category.get(c, 0) + 1
+        for p in hit_place:
+            counts_place[p] = counts_place.get(p, 0) + 1
+        for h in hit_hashtags:
+            counts_hashtag[h] = counts_hashtag.get(h, 0) + 1
+
+    # ---------- 1) NOTICIAS ----------
+    for feed in NEWS_FEEDS:
+        for e in fetch_entries(feed)[:40]:
             title = getattr(e, "title", "") or ""
             link = getattr(e, "link", "") or ""
             summary = getattr(e, "summary", "") or getattr(e, "description", "") or ""
@@ -285,129 +310,222 @@ def main():
             if fp in seen["items"]:
                 continue
 
-            hits = match_keywords(title, summary, keywords)
-            if not hits:
+            text = f"{title} {summary}"
+            text_n = normalize(text)
+
+            # filtra: debe mencionar al menos 1 lugar o 1 región target
+            hit_place = [p for p in place_terms if p in text_n]
+            if not hit_place:
                 continue
 
-            # Guardar como visto
-            seen["items"][fp] = {
-                "title": title,
-                "link": link,
-                "ts": time.time(),
-                "feed": feed,
-                "hits": hits[:12],
-            }
+            hit_cats = classify_categories(text)
+            if not hit_cats:
+                # si no cae en categorías, igual puede ser relevante por gobierno/contratación
+                if not any(normalize(g) in text_n for g in GOV_KEYWORDS):
+                    continue
 
-            # Contadores
-            for h in hits:
-                run_counts[h] = run_counts.get(h, 0) + 1
+            hit_hashtags = extract_hashtags(text)
+            hit_keywords = [k for k in keywords if k in text_n]
 
-            new_items.append({
-                "title": title.strip(),
-                "link": link.strip(),
-                "hits": hits[:8],
-                "feed": feed,
-            })
+            seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": "news"}
+            new_items.append({"src": "news", "title": title.strip(), "link": link.strip(),
+                              "places": hit_place[:4], "cats": hit_cats[:3], "hashtags": hit_hashtags[:5]})
 
-    # Guardar history del run
-    history["runs"].append({
-        "ts": now_iso,
-        "counts": run_counts
-    })
-    history["runs"] = history["runs"][-HISTORY_RUNS:]
+            register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords)
 
-    # Limpieza seen (para no crecer infinito): borra items viejos
-    cutoff = time.time() - (SEEN_DAYS * 24 * 3600)
+    # ---------- 2) PROXY SOCIAL (Google News RSS + site:x.com etc) ----------
+    # Construimos queries por región + categorías clave (para detectar conversación web)
+    social_queries = []
+    for rkey in REGIONS.keys():
+        for cat_terms in [
+            "inundaciones", "sequía", "deslizamientos", "infraestructura vial", "salud", "educación", "cambio climático"
+        ]:
+            for platform, site in SOCIAL_SITES.items():
+                q = f'{site} "{rkey}" "{cat_terms}"'
+                social_queries.append((platform, q))
+
+    # limita para no exceder (gratis)
+    social_queries = social_queries[:24]
+
+    for platform, query in social_queries:
+        feed_url = google_news_rss_url(query)
+        for e in fetch_entries(feed_url)[:15]:
+            title = getattr(e, "title", "") or ""
+            link = getattr(e, "link", "") or ""
+            summary = getattr(e, "summary", "") or getattr(e, "description", "") or ""
+
+            fp = item_fingerprint(title, link)
+            if fp in seen["items"]:
+                continue
+
+            text = f"{title} {summary}"
+            text_n = normalize(text)
+
+            hit_place = [p for p in place_terms if p in text_n]
+            if not hit_place:
+                continue
+
+            hit_cats = classify_categories(text)
+            hit_hashtags = extract_hashtags(text)
+            hit_keywords = [k for k in keywords if k in text_n]
+
+            seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": f"social:{platform}"}
+            new_items.append({"src": f"social:{platform}", "title": title.strip(), "link": link.strip(),
+                              "places": hit_place[:4], "cats": hit_cats[:3], "hashtags": hit_hashtags[:5]})
+
+            register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords)
+
+    # ---------- Limpieza (seen) ----------
+    cutoff = time.time() - (7 * 24 * 3600)
     seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
-
     save_json(SEEN_PATH, seen)
+
+    # ---------- History ----------
+    run_snapshot = {
+        "ts": now,
+        "keyword": counts_keyword,
+        "category": counts_category,
+        "place": counts_place,
+        "hashtag": counts_hashtag,
+    }
+    history["runs"].append(run_snapshot)
+    history["runs"] = history["runs"][-200:]  # guarda más para tendencias
     save_json(HIST_PATH, history)
 
-    # =========================
-    # Tendencias del run (picos)
-    # =========================
-    prev_runs = history["runs"][-21:-1]  # últimos 20 antes del run actual
-    avg = {}
-    if prev_runs:
-        for r in prev_runs:
-            for k, c in r.get("counts", {}).items():
-                avg[k] = avg.get(k, 0) + c
-        for k in list(avg.keys()):
-            avg[k] = avg[k] / max(1, len(prev_runs))
+    # ---------- Tendencias (picos) ----------
+    # Promedio simple últimos 20 runs
+    prev = history["runs"][-21:-1]
+    def avg_map(key):
+        acc = {}
+        if not prev:
+            return acc
+        for r in prev:
+            m = r.get(key, {})
+            for k, v in m.items():
+                acc[k] = acc.get(k, 0) + float(v)
+        for k in list(acc.keys()):
+            acc[k] = acc[k] / len(prev)
+        return acc
 
-    spikes = []
-    for k, c in run_counts.items():
-        base = avg.get(k, 0.0)
-        # pico si count>=3 y (base==0 o duplica promedio)
-        if c >= 3 and (base == 0.0 or c >= 2 * base):
-            spikes.append((k, c, base))
-    spikes = sorted(spikes, key=lambda x: x[1], reverse=True)[:6]
+    avg_category = avg_map("category")
+    avg_place = avg_map("place")
+    avg_hashtag = avg_map("hashtag")
 
-    top_hits = sorted(run_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    def spikes(current_map, avgm, min_count=3):
+        out = []
+        for k, c in current_map.items():
+            c = float(c)
+            base = float(avgm.get(k, 0.0))
+            if c >= min_count and (base == 0.0 or c >= 2 * base):
+                out.append((k, c, base))
+        out.sort(key=lambda x: x[1], reverse=True)
+        return out[:10]
 
-    # =========================
-    # SOCIAL (si conectas APIs)
-    # =========================
-    social = fetch_social_trends()  # hoy retorna []
-    # si tienes social, también podrías cruzarlo con keywords/temas
+    spikes_category = spikes(counts_category, avg_category, min_count=2)
+    spikes_place = spikes(counts_place, avg_place, min_count=2)
+    spikes_hashtag = spikes(counts_hashtag, avg_hashtag, min_count=2)
 
-    # =========================
-    # MODOS
-    # =========================
+    # Google Trends
+    trends = fetch_google_trends_signals()
+
+    # ---------- MODOS ----------
     if MODE == "DAILY":
-        last_runs = history["runs"][-96:]  # ~24h si corre cada 15 min (ajusta según tu cron)
-        agg = {}
-        for r in last_runs:
-            for k, c in r.get("counts", {}).items():
-                agg[k] = agg.get(k, 0) + c
+        # resumen 24h (aprox): últimos 96 runs si corre cada 15 min (ajusta si cambias cron)
+        last = history["runs"][-96:] if len(history["runs"]) >= 1 else []
+        agg_cat = {}
+        agg_place = {}
+        agg_hash = {}
+        for r in last:
+            for k, v in r.get("category", {}).items():
+                agg_cat[k] = agg_cat.get(k, 0) + int(v)
+            for k, v in r.get("place", {}).items():
+                agg_place[k] = agg_place.get(k, 0) + int(v)
+            for k, v in r.get("hashtag", {}).items():
+                agg_hash[k] = agg_hash.get(k, 0) + int(v)
 
-        top24 = sorted(agg.items(), key=lambda x: x[1], reverse=True)[:12]
+        top_cat = sorted(agg_cat.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_place = sorted(agg_place.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_hash = sorted(agg_hash.items(), key=lambda x: x[1], reverse=True)[:10]
 
         lines = []
-        lines.append("🟣 Radar Regional — RESUMEN DIARIO (24h)")
-        lines.append("\n📍 Cobertura: Antioquia, Caldas, Valledupar, La Guajira")
-        lines.append("\n📈 Top temas (24h):")
-        for k, c in top24:
-            lines.append(f"- {k}: {c}")
+        lines.append("🟣 Radar Opinión Pública — RESUMEN 24H")
+        lines.append("📍 Antioquia • Caldas • Cesar(Valledupar) • La Guajira\n")
 
-        if social:
-            lines.append("\n📣 Tendencias redes (conectadas):")
-            for s in social[:10]:
-                lines.append(f"- {s.get('platform')}: {s.get('tag')} ({s.get('count')})")
+        lines.append("📈 Categorías top:")
+        for k, v in top_cat:
+            lines.append(f"- {k}: {v}")
+
+        lines.append("\n🗺️ Lugares top (municipios/deptos):")
+        for k, v in top_place:
+            lines.append(f"- {k}: {v}")
+
+        if top_hash:
+            lines.append("\n#️⃣ Hashtags/palabras top:")
+            for k, v in top_hash:
+                lines.append(f"- {k}: {v}")
+
+        if trends.get("spikes"):
+            lines.append("\n🔎 Google Trends (sube fuerte):")
+            for s in trends["spikes"][:5]:
+                lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
 
         send_telegram("\n".join(lines))
         return
 
-    # MODE ALERT (default)
-    if not new_items and not spikes:
-        # Nada relevante hoy, no enviamos
-        print("Sin novedades (no hay noticias nuevas ni picos).")
+    # ALERT: manda solo si hay señales fuertes
+    strong_signal = bool(spikes_category or spikes_place or spikes_hashtag or trends.get("spikes") or len(new_items) >= 5)
+    if not strong_signal:
+        print("Sin señales fuertes (no alerta).")
         return
 
+    top_cat_now = sorted(counts_category.items(), key=lambda x: x[1], reverse=True)[:8]
+    top_place_now = sorted(counts_place.items(), key=lambda x: x[1], reverse=True)[:8]
+    top_hash_now = sorted(counts_hashtag.items(), key=lambda x: x[1], reverse=True)[:8]
+
     lines = []
-    lines.append("🟣 Radar Regional — ALERTA")
-    lines.append("\n📍 Cobertura: Antioquia, Caldas, Valledupar, La Guajira")
+    lines.append("🟣 Radar Opinión Pública — ALERTA")
+    lines.append("📍 Antioquia • Caldas • Cesar(Valledupar) • La Guajira\n")
 
-    if spikes:
-        lines.append("\n🔥 Tendencias en pico:")
-        for k, c, base in spikes:
-            lines.append(f"- {k}: {c} (prom {base:.1f})")
+    if spikes_category:
+        lines.append("🔥 Suben categorías:")
+        for k, c, base in spikes_category[:6]:
+            lines.append(f"- {k}: {int(c)} (prom {base:.1f})")
 
-    if top_hits:
-        lines.append("\n📈 Top temas del run:")
-        for k, c in top_hits[:8]:
-            lines.append(f"- {k}: {c}")
+    if spikes_place:
+        lines.append("\n🔥 Sube en lugares:")
+        for k, c, base in spikes_place[:6]:
+            lines.append(f"- {k}: {int(c)} (prom {base:.1f})")
+
+    if spikes_hashtag:
+        lines.append("\n🔥 Suben hashtags/palabras:")
+        for k, c, base in spikes_hashtag[:6]:
+            lines.append(f"- {k}: {int(c)} (prom {base:.1f})")
+
+    lines.append("\n📈 Top ahora (categorías):")
+    for k, v in top_cat_now:
+        lines.append(f"- {k}: {v}")
+
+    lines.append("\n🗺️ Top ahora (lugares):")
+    for k, v in top_place_now:
+        lines.append(f"- {k}: {v}")
+
+    if top_hash_now:
+        lines.append("\n#️⃣ Top ahora (hashtags/palabras):")
+        for k, v in top_hash_now:
+            lines.append(f"- {k}: {v}")
+
+    if trends.get("spikes"):
+        lines.append("\n🔎 Google Trends (sube fuerte):")
+        for s in trends["spikes"][:5]:
+            lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
 
     if new_items:
-        lines.append("\n📰 Noticias nuevas relevantes (máx 10):")
-        for a in new_items[:10]:
-            tags = ", ".join(a["hits"][:3])
-            lines.append(f"• {a['title']}\n  ({tags})\n  {a['link']}")
-
-    if social:
-        lines.append("\n📣 Tendencias redes (conectadas):")
-        for s in social[:10]:
-            lines.append(f"- {s.get('platform')}: {s.get('tag')} ({s.get('count')})")
+        lines.append("\n📰 Evidencia (máx 8 links):")
+        for it in new_items[:8]:
+            src = it["src"]
+            cats = ", ".join(it["cats"]) if it["cats"] else "sin_categoria"
+            places = ", ".join(it["places"]) if it["places"] else "sin_lugar"
+            lines.append(f"• [{src}] {it['title']}\n  ({cats} | {places})\n  {it['link']}")
 
     send_telegram("\n".join(lines))
 
