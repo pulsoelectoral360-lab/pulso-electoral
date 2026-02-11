@@ -20,7 +20,23 @@ except Exception:
 # SECRETS
 # =========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+CHAT_ID_ANTIOQUIA = os.getenv("CHAT_ID_ANTIOQUIA")
+CHAT_ID_CALDAS = os.getenv("CHAT_ID_CALDAS")
+CHAT_ID_GUAJIRA = os.getenv("CHAT_ID_GUAJIRA")
+CHAT_ID_CESAR = os.getenv("CHAT_ID_CESAR")
+
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("Falta secret: TELEGRAM_TOKEN")
+
+for k, v in {
+    "CHAT_ID_ANTIOQUIA": CHAT_ID_ANTIOQUIA,
+    "CHAT_ID_CALDAS": CHAT_ID_CALDAS,
+    "CHAT_ID_GUAJIRA": CHAT_ID_GUAJIRA,
+    "CHAT_ID_CESAR": CHAT_ID_CESAR,
+}.items():
+    if not v:
+        raise RuntimeError(f"Falta secret: {k}")
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise RuntimeError("Faltan secrets: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
