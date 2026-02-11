@@ -1,0 +1,38 @@
+name: Pulso Electoral Daily
+
+on:
+  schedule:
+    # 7:00am Colombia (UTC-5) = 12:00 UTC
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore cache (seen/history)
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: pulso-electoral-data
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bot (DAILY)
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: DAILY
+        run: |
+          python bot.py
