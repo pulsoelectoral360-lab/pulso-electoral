@@ -24,6 +24,6 @@ jobs:
           CHAT_ID_CALDAS: ${{ secrets.CHAT_ID_CALDAS }}
           CHAT_ID_GUAJIRA: ${{ secrets.CHAT_ID_GUAJIRA }}
           CHAT_ID_CESAR: ${{ secrets.CHAT_ID_CESAR }}
-          MODE: ALERT
+          MODE: DAILY
           ENABLE_TRENDS: "1"
         run: python bot.py
