@@ -558,7 +558,10 @@ def main():
             places = ", ".join(it["places"]) if it["places"] else "sin_lugar"
             lines.append(f"• [{src}] {it['title']}\n  ({cats} | {places})\n  {it['link']}")
 
-    send_telegram("\n".join(lines))
+    send_telegram(CHAT_ID_ANTIOQUIA, "\n".join(lines))
+send_telegram(CHAT_ID_CALDAS, "\n".join(lines))
+send_telegram(CHAT_ID_GUAJIRA, "\n".join(lines))
+send_telegram(CHAT_ID_CESAR, "\n".join(lines))
 
 
 if __name__ == "__main__":
