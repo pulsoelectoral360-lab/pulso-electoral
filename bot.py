@@ -174,26 +174,22 @@ def fetch_entries(feed_url: str):
     parsed = feedparser.parse(feed_url)
     return parsed.entries if getattr(parsed, "entries", None) else []
 
-def send_telegram(text: str):
+def send_telegram(chat_id: str, text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    # Telegram límite ~4096
     text = (text or "").strip()
     if len(text) > 3900:
         text = text[:3900] + "\n\n[Mensaje recortado]"
 
     payload = {
-        "chat_id": str(TELEGRAM_CHAT_ID).strip(),
+        "chat_id": str(chat_id).strip(),
         "text": text,
         "disable_web_page_preview": True,
     }
 
     r = requests.post(url, json=payload, timeout=25)
-
-    # Si falla, imprime respuesta exacta (CLAVE para corregir)
     if r.status_code != 200:
         print("Telegram error:", r.status_code, r.text)
-
     r.raise_for_status()
 
 def extract_hashtags(text: str):
