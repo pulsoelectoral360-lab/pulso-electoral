@@ -276,7 +276,7 @@ if MODE == "DAILY":
         lines.append(f"- {k}: {c}")
 
     send_telegram("\n".join(lines))
-    return
+    
 
 
 if __name__ == "__main__":
