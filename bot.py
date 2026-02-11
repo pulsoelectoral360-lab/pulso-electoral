@@ -170,12 +170,12 @@ history["runs"].append({
 history["runs"] = history["runs"][-60:]
 
     # Limpieza seen (para no crecer infinito)
-    # Borra items vistos hace > 7 días
-    cutoff = time.time() - (7 * 24 * 3600)
-    seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
+# Borra items vistos hace > 7 días
+cutoff = time.time() - (7 * 24 * 3600)
+seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
 
-    save_json(SEEN_PATH, seen)
-    save_json(HIST_PATH, history)
+save_json(SEEN_PATH, seen)
+save_json(HIST_PATH, history)
 
     # --------- ALERTAS ----------
     if not new_alerts:
