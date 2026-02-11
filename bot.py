@@ -184,7 +184,7 @@ cutoff = time.time() - (7 * 24 * 3600)
 seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
 
 save_json(SEEN_PATH, seen)
-        save_json(HIST_PATH, history)
+        
 
         # -------- ALERTAS --------
         if not new_alerts:
