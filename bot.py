@@ -177,8 +177,9 @@ seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cut
 save_json(SEEN_PATH, seen)
 save_json(HIST_PATH, history)
 
-    # --------- ALERTAS ----------
-    if not new_alerts:
+# -------- ALERTAS --------
+if not new_alerts:
+    return
         # No spamear: si quieres “heartbeat” diario, lo hacemos luego
         return
 
