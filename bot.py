@@ -161,11 +161,11 @@ def main():
                 "feed": feed
             })
 history = load_json(HIST_PATH, {"runs": []})
-    # Guardar run en history
-    history["runs"].append({
-        "ts": now,
-        "counts": run_counts
-    })
+
+history["runs"].append({
+    "ts": now,
+    "counts": run_counts
+})
     # Mantener historia corta (últimos 60 runs)
     history["runs"] = history["runs"][-60:]
 
