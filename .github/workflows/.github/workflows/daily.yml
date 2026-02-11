@@ -1,27 +1,31 @@
-name: Radar Daily
+name: Radar DAILY (3x)
 
 on:
   schedule:
-    - cron: "0 12 * * *"  # 7:00am Colombia = 12:00 UTC
+    - cron: "30 12 * * *"  # 07:30 Colombia
+    - cron: "30 17 * * *"  # 12:30 Colombia
+    - cron: "30 0 * * *"   # 19:30 Colombia
   workflow_dispatch:
 
 jobs:
-  run:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
       - name: Run bot (DAILY)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CHAT_ID_ANTIOQUIA: ${{ secrets.CHAT_ID_ANTIOQUIA }}
+          CHAT_ID_CALDAS: ${{ secrets.CHAT_ID_CALDAS }}
+          CHAT_ID_GUAJIRA: ${{ secrets.CHAT_ID_GUAJIRA }}
+          CHAT_ID_CESAR: ${{ secrets.CHAT_ID_CESAR }}
           MODE: DAILY
           ENABLE_TRENDS: "1"
         run: python bot.py
