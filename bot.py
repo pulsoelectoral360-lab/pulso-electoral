@@ -251,6 +251,8 @@ if MODE == "ALERT":
     for k, c, base in spikes:
         lines.append(f"- {k}: {c} (prom {base:.1f})")
 
+if not new_items:
+    return  # no enviar nada si no hay noticias nuevas
     lines.append("\n📰 Noticias nuevas:")
     for a in new_items[:10]:
         tags = ", ".join(a["hits"][:3])
