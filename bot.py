@@ -26,7 +26,7 @@ CHAT_ID_ANTIOQUIA = os.getenv("CHAT_ID_ANTIOQUIA")
 CHAT_ID_CALDAS = os.getenv("CHAT_ID_CALDAS")
 CHAT_ID_GUAJIRA = os.getenv("CHAT_ID_GUAJIRA")
 CHAT_ID_CESAR = os.getenv("CHAT_ID_CESAR")
-CHAT_ID_PREMIUM = os.getenv("CHAT_ID_PREMIUM")  # opcional
+CHAT_ID_PREMIUM = os.getenv("CHAT_ID_PREMIUM")  # opcional (monetizable / copy a clientes)
 
 MODE = os.getenv("MODE", "ALERT").strip().upper()  # ALERT | DAILY
 ENABLE_TRENDS = os.getenv("ENABLE_TRENDS", "1").strip() == "1"
@@ -44,12 +44,11 @@ for k, v in {
         raise RuntimeError(f"Falta secret: {k}")
 
 REGIONS = {
-    "antioquia": {"label": "Antioquia", "chat_id": CHAT_ID_ANTIOQUIA, "aliases": ["antioquia"]},
-    "caldas": {"label": "Caldas", "chat_id": CHAT_ID_CALDAS, "aliases": ["caldas"]},
-    "la guajira": {"label": "La Guajira", "chat_id": CHAT_ID_GUAJIRA, "aliases": ["la guajira", "guajira"]},
+    "antioquia": {"label": "Antioquia", "chat_id": CHAT_ID_ANTIOQUIA, "aliases": ["antioquia", "medellin"]},
+    "caldas": {"label": "Caldas", "chat_id": CHAT_ID_CALDAS, "aliases": ["caldas", "manizales"]},
+    "la guajira": {"label": "La Guajira", "chat_id": CHAT_ID_GUAJIRA, "aliases": ["la guajira", "guajira", "riohacha"]},
     "cesar": {"label": "Cesar (Valledupar)", "chat_id": CHAT_ID_CESAR, "aliases": ["cesar", "valledupar"]},
 }
-
 
 # =========================
 # DATA PATHS
@@ -82,7 +81,6 @@ SOCIAL_SITES = {
     "Facebook": "site:facebook.com",
 }
 
-
 # =========================
 # CATEGORÍAS
 # =========================
@@ -99,7 +97,7 @@ CATEGORIES = {
         "innovación", "innovacion", "tecnología", "tecnologia", "startup", "emprendimiento",
         "i+d", "investigación", "investigacion", "transformación digital", "transformacion digital",
     ],
-    "venta_activos_publicos": [
+    "venta_activos_publicones_publicos": [
         "venta de", "enajenación", "enajenacion", "privatización", "privatizacion",
         "concesión", "concesion", "alianza público-privada", "app",
         "venta de entidad", "venta de empresa pública", "venta de empresa publica",
@@ -135,19 +133,20 @@ GOV_KEYWORDS = [
     "gobernación", "gobernacion", "alcaldía", "alcaldia", "concejo", "asamblea departamental",
     "contrato", "licitación", "licitacion", "convenio", "secop", "sobrecosto",
     "procuraduría", "procuraduria", "contraloría", "contraloria", "fiscalía", "fiscalia",
+    "corrupción", "corrupcion", "inseguridad", "captura", "protesta", "paro"
 ]
 
 CATEGORY_LABELS = {
-    "inversion_social": "Inversión social y programas de protección",
+    "inversion_social": "Inversión social y protección",
     "inversion_privada": "Inversión privada, empleo y reactivación",
     "innovacion": "Innovación, tecnología y emprendimiento",
-    "venta_activos_publicos": "Venta/enajenación de activos públicos y APP",
+    "venta_activos_ones_publicos": "Enajenación/APP y activos públicos",
     "educacion": "Educación e infraestructura educativa",
     "salud": "Salud e infraestructura hospitalaria",
     "infra_vial": "Infraestructura vial y movilidad",
     "medioambiente": "Medioambiente y sostenibilidad",
-    "tragedia_emergencia": "Tragedias, emergencias y gestión del riesgo",
-    "clima_riesgo": "Riesgo climático (inundaciones, sequías, derrumbes, etc.)",
+    "tragedia_emergencia": "Emergencias y gestión del riesgo",
+    "clima_riesgo": "Riesgo climático (inundaciones/sequías/derrumbes)",
 }
 
 
@@ -155,6 +154,7 @@ CATEGORY_LABELS = {
 # UTILIDADES
 # =========================
 HASHTAG_RE = re.compile(r"(#\w+)", re.UNICODE)
+
 
 def load_json(path: str, default):
     if not os.path.exists(path):
@@ -165,48 +165,51 @@ def load_json(path: str, default):
     except Exception:
         return default
 
+
 def save_json(path: str, obj) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
+
 def normalize(text: str) -> str:
     return (text or "").strip().lower()
 
+
 def sha(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:24]
+
 
 def item_fingerprint(title: str, link: str) -> str:
     base = (normalize(title) + "|" + (link or "").strip()).encode("utf-8")
     return hashlib.sha256(base).hexdigest()[:24]
 
+
 def google_news_rss_url(query: str) -> str:
     q = requests.utils.quote(query)
     return f"https://news.google.com/rss/search?q={q}&hl=es-419&gl=CO&ceid=CO:es-419"
+
 
 def fetch_entries(feed_url: str):
     parsed = feedparser.parse(feed_url)
     return parsed.entries if getattr(parsed, "entries", None) else []
 
+
 def send_telegram(chat_id: str, text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     text = (text or "").strip()
-
     if len(text) > 3900:
         text = text[:3900] + "\n\n[Mensaje recortado]"
 
-    payload = {
-        "chat_id": str(chat_id).strip(),
-        "text": text,
-        "disable_web_page_preview": True,
-    }
-
+    payload = {"chat_id": str(chat_id).strip(), "text": text, "disable_web_page_preview": True}
     r = requests.post(url, json=payload, timeout=25)
     if r.status_code != 200:
         print("Telegram error:", r.status_code, r.text)
     r.raise_for_status()
 
+
 def extract_hashtags(text: str) -> List[str]:
     return [normalize(h) for h in HASHTAG_RE.findall(text or "")]
+
 
 def classify_categories(text: str) -> List[str]:
     text_n = normalize(text)
@@ -218,12 +221,17 @@ def classify_categories(text: str) -> List[str]:
                 break
     return matched
 
+
+def human_category(cat: str) -> str:
+    return CATEGORY_LABELS.get(cat, cat)
+
+
 def build_terms_for_trends() -> List[str]:
     return ["inundaciones", "sequía", "infraestructura vial", "salud", "educación"]
 
 
 # =========================
-# MUNICIPIOS (Wikipedia) + cache + MAP municipio->region
+# MUNICIPIOS (Wikipedia) + cache
 # =========================
 WIKI_MUN_URLS = {
     "antioquia": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_Antioquia",
@@ -231,6 +239,7 @@ WIKI_MUN_URLS = {
     "la guajira": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_La_Guajira",
     "cesar": "https://es.wikipedia.org/wiki/Anexo:Municipios_del_Cesar",
 }
+
 
 def fetch_municipios_from_wikipedia(region_key: str) -> List[str]:
     url = WIKI_MUN_URLS.get(region_key)
@@ -256,6 +265,7 @@ def fetch_municipios_from_wikipedia(region_key: str) -> List[str]:
     municipios = [m for m in municipios if len(m) >= 3 and not m.startswith("nota")]
     return municipios
 
+
 def load_places_and_map() -> Tuple[Dict[str, List[str]], Dict[str, str], List[str]]:
     cache = load_json(MUN_CACHE_PATH, default={"ts": 0, "data": {}})
     fresh = (time.time() - cache.get("ts", 0)) < MUN_CACHE_TTL
@@ -276,7 +286,7 @@ def load_places_and_map() -> Tuple[Dict[str, List[str]], Dict[str, str], List[st
         for m in muns:
             muni_to_region[normalize(m)] = rk
 
-    # alias extra
+    # alias extra (por si aparece así)
     muni_to_region["guajira"] = "la guajira"
     muni_to_region["valledupar"] = "cesar"
 
@@ -287,15 +297,15 @@ def load_places_and_map() -> Tuple[Dict[str, List[str]], Dict[str, str], List[st
 
     return municipios_by_region, muni_to_region, region_aliases_flat
 
+
 def infer_regions_from_text(
     text_n: str,
     municipios_by_region: Dict[str, List[str]],
-    muni_to_region: Dict[str, str],
     region_aliases_flat: List[str]
 ) -> List[str]:
     hit = set()
 
-    # alias directos de región
+    # 1) alias directos (incluye "guajira")
     for a in region_aliases_flat:
         if a and a in text_n:
             if a == "guajira":
@@ -305,7 +315,7 @@ def infer_regions_from_text(
             elif a in ("antioquia", "caldas", "la guajira", "cesar"):
                 hit.add(a)
 
-    # municipios
+    # 2) municipios (escaneo simple)
     for rk, muns in municipios_by_region.items():
         for m in muns:
             mm = normalize(m)
@@ -315,33 +325,29 @@ def infer_regions_from_text(
 
     return list(hit)
 
+
 def extract_places_for_region(text_n: str, rk: str, municipios_by_region: Dict[str, List[str]]) -> List[str]:
     places = set()
 
     for a in REGIONS[rk].get("aliases", []):
         aa = normalize(a)
-        if aa in text_n:
-            places.add(aa)
+        if aa and aa in text_n:
+            # normaliza guajira
+            if aa == "guajira":
+                places.add("la guajira")
+            else:
+                places.add(aa)
 
     for m in municipios_by_region.get(rk, []):
         mm = normalize(m)
         if mm and mm in text_n:
             places.add(mm)
 
-    out = []
-    for p in places:
-        if p == "guajira":
-            out.append("la guajira")
-        elif p == "valledupar":
-            out.append("valledupar")
-        else:
-            out.append(p)
-
-    return sorted(out)
+    return sorted(places)
 
 
 # =========================
-# GOOGLE TRENDS
+# GOOGLE TRENDS (opcional)
 # =========================
 def fetch_google_trends_signals():
     signals = {"spikes": [], "raw": {}}
@@ -417,10 +423,11 @@ def compute_spikes_region(
 # Intensidad (2 colores) + anti repetidos
 # =========================
 def compute_intensity_two_colors(score_spikes: int, volume: int, top_muni_count: int) -> Tuple[str, str]:
-    # 🔴 ALTA / 🟡 MEDIA
+    # 🔴 = alto / 🟡 = medio
     if score_spikes >= 4 or volume >= 20 or top_muni_count >= 8:
         return "🔴", "ALTA"
     return "🟡", "MEDIA"
+
 
 def make_alert_signature(
     region_key: str,
@@ -442,6 +449,7 @@ def make_alert_signature(
     }
     return sha(json.dumps(core, ensure_ascii=False, sort_keys=True))
 
+
 def should_skip_repeated_alert(region_key: str, signature: str, ttl_seconds: int = 6 * 3600) -> bool:
     state = load_json(LAST_ALERT_PATH, default={"regions": {}})
     reg = state.get("regions", {}).get(region_key, {})
@@ -458,101 +466,134 @@ def should_skip_repeated_alert(region_key: str, signature: str, ttl_seconds: int
 
 
 # =========================
-# Redacción premium
+# Copy premium (consultora)
 # =========================
-def human_category(cat: str) -> str:
-    return CATEGORY_LABELS.get(cat, cat)
-
-def pick_top_non_region_place(region_key: str, top_places: List[Tuple[str, int]]) -> Optional[Tuple[str, int]]:
+def pick_top_muni(top_places: List[Tuple[str, int]], region_key: str) -> Optional[Tuple[str, int]]:
     for p, cnt in top_places:
-        if p != region_key:
+        if p and p != region_key:
             return (p, cnt)
-    return None
+    return top_places[0] if top_places else None
 
-def infer_theme_from_titles(cat: str, items: List[dict]) -> Optional[str]:
+
+def infer_theme_from_items(cat: str, items: List[dict]) -> Optional[str]:
     if not items:
         return None
-    text = normalize(" ".join([it.get("title", "") for it in items[:12]]))
+    text = normalize(" ".join([it.get("title", "") for it in items[:15]]))
 
     if cat == "clima_riesgo":
         candidates = ["inundacion", "inundaciones", "sequia", "sequía", "deslizamiento", "derrumbe", "ola invernal"]
     elif cat == "infra_vial":
         candidates = ["via", "vía", "carretera", "puente", "peaje", "tunel", "túnel", "pavimentacion", "pavimentación"]
     elif cat == "salud":
-        candidates = ["hospital", "clinica", "clínica", "eps", "urgencias"]
+        candidates = ["hospital", "clinica", "clínica", "urgencias", "eps"]
     elif cat == "educacion":
         candidates = ["colegio", "escuela", "universidad", "pae"]
     else:
-        candidates = []
+        candidates = ["corrupcion", "corrupción", "inseguridad", "protesta", "paro", "captura"]
 
     for w in candidates:
         if normalize(w) in text:
             return w
     return None
 
-def build_premium_executive_summary(
+
+def build_executive_alert(
     region_label: str,
     icon: str,
     lvl: str,
-    top_muni: Optional[Tuple[str, int]],
-    top_cat: Optional[Tuple[str, int]],
+    volume: int,
+    top_places: List[Tuple[str, int]],
+    top_cats: List[Tuple[str, int]],
     spikes_cat: List[Tuple[str, int, float]],
     spikes_place: List[Tuple[str, int, float]],
-    volume: int,
     items: List[dict]
 ) -> List[str]:
     lines: List[str] = []
-    lines.append(f"🟣 Pulso Electoral — Informe Ejecutivo de Riesgo Territorial — {region_label}")
-    lines.append(f"{icon} Intensidad: {lvl}  |  Volumen de señales: {volume}\n")
+    lines.append(f"🟣 Pulso Electoral | Inteligencia Territorial — {region_label}")
+    lines.append(f"{icon} Intensidad: {lvl}  |  Volumen (señales): {volume}\n")
+
+    top_muni = pick_top_muni(top_places, normalize(region_label))
+    top_cat = top_cats[0] if top_cats else None
 
     if top_muni and top_cat:
         cat_key = top_cat[0]
         cat_label = human_category(cat_key)
-        theme = infer_theme_from_titles(cat_key, items)
-     
+        theme = infer_theme_from_items(cat_key, items)
+        if theme:
+            lines.append(
+                f"📌 Síntesis ejecutiva: Se consolida **intensidad {lvl.lower()}** en **{top_muni[0].title()}** "
+                f"(menciones: {top_muni[1]}), asociada principalmente a **{cat_label.lower()}** "
+                f"(señal temática: “{theme}”).\n"
+            )
+        else:
+            lines.append(
+                f"📌 Síntesis ejecutiva: Se consolida **intensidad {lvl.lower()}** en **{top_muni[0].title()}** "
+                f"(menciones: {top_muni[1]}), asociada principalmente a **{cat_label.lower()}**.\n"
+            )
+
+    if spikes_cat or spikes_place:
+        lines.append("📈 Variación vs. línea base (aceleraciones detectadas):")
+        if spikes_cat:
+            lines.append("• Categorías en aceleración:")
+            for k, c, base in spikes_cat[:4]:
+                lines.append(f"  - {human_category(k)}: {c} (prom. {base:.1f})")
+        if spikes_place:
+            lines.append("• Territorios en aceleración:")
+            for k, c, base in spikes_place[:4]:
+                lines.append(f"  - {k.title()}: {c} (prom. {base:.1f})")
+        lines.append("")
+
+    lines.append("🧭 Recomendación táctica:")
+    if lvl == "ALTA":
+        lines.append("• Activar respuesta inmediata con mensaje institucional verificable (hechos, acciones, responsables).")
+        lines.append("• Preparar Q&A y unificar vocería para neutralizar desinformación/ruido antes de que escale.")
+    else:
+        lines.append("• Mantener monitoreo reforzado y posicionamiento preventivo; ajustar tono según actor dominante.")
+        lines.append("• Consolidar evidencia y validar fuentes para minimizar riesgo de amplificación de narrativas falsas.")
+    lines.append("")
+
+    if top_muni:
+        lines.append(f"📍 Indicador de ruido: **Nivel de ruido {lvl.lower()}** en **{top_muni[0].title()}** (menciones: {top_muni[1]}).")
+
+    return lines
+
+
+# =========================
+# CORE
+# =========================
 def main():
     seen = load_json(SEEN_PATH, default={"items": {}})
     history = load_json(HIST_PATH, default={"runs": []})
 
-    municipios_by_region, muni_to_region, region_aliases_flat = load_places_and_map()
+    municipios_by_region, _muni_to_region, region_aliases_flat = load_places_and_map()
 
-    # keywords para conteos
-    category_terms: List[str] = []
-    for terms in CATEGORIES.values():
-        for t in terms:
-            category_terms.append(normalize(t))
-
+    # keywords globales para conteo (no bloquea alerta, solo suma)
+    category_terms = [normalize(t) for terms in CATEGORIES.values() for t in terms]
     keywords_global = category_terms + [normalize(k) for k in GOV_KEYWORDS]
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    now_epoch = int(time.time())
 
-    # por región
-    region_counts_category: Dict[str, Dict[str, int]] = {rk: {} for rk in REGIONS.keys()}
-    region_counts_place: Dict[str, Dict[str, int]] = {rk: {} for rk in REGIONS.keys()}
-    region_counts_hashtag: Dict[str, Dict[str, int]] = {rk: {} for rk in REGIONS.keys()}
-    region_counts_keyword: Dict[str, Dict[str, int]] = {rk: {} for rk in REGIONS.keys()}
-    region_items: Dict[str, List[dict]] = {rk: [] for rk in REGIONS.keys()}
+    # contadores por región
+    region_counts_category = {rk: {} for rk in REGIONS.keys()}
+    region_counts_place = {rk: {} for rk in REGIONS.keys()}
+    region_counts_hashtag = {rk: {} for rk in REGIONS.keys()}
+    region_counts_keyword = {rk: {} for rk in REGIONS.keys()}
+    region_items = {rk: [] for rk in REGIONS.keys()}  # evidencias (links/titles)
 
     def bump(d: Dict[str, int], k: str, n: int = 1):
         d[k] = d.get(k, 0) + n
 
-    def register(
-        rk: str,
-        hit_places: List[str],
-        hit_cats: List[str],
-        hit_hash: List[str],
-        hit_kw: List[str],
-        item: dict
-    ):
+    def register(rk: str, hit_places: List[str], hit_cats: List[str], hit_hash: List[str], hit_kw: List[str], item: dict):
         for c in hit_cats:
             bump(region_counts_category[rk], c)
         for p in hit_places:
             bump(region_counts_place[rk], p)
         for h in hit_hash:
             bump(region_counts_hashtag[rk], h)
-        for k in hit_kw:
-            bump(region_counts_keyword[rk], k)
+        for kw in hit_kw:
+            bump(region_counts_keyword[rk], kw)
         region_items[rk].append(item)
 
     # ---------- 1) NOTICIAS ----------
@@ -569,7 +610,7 @@ def main():
             text = f"{title} {summary}"
             text_n = normalize(text)
 
-            hit_regions = infer_regions_from_text(text_n, municipios_by_region, muni_to_region, region_aliases_flat)
+            hit_regions = infer_regions_from_text(text_n, municipios_by_region, region_aliases_flat)
             if not hit_regions:
                 continue
 
@@ -587,30 +628,27 @@ def main():
                 if not hit_places:
                     hit_places = [rk]
 
-                item = {
-                    "src": "news",
-                    "title": title.strip(),
-                    "link": link.strip(),
-                    "places": hit_places[:6],
-                    "cats": hit_cats[:3],
-                    "hashtags": hit_hash[:6],
-                }
-                register(rk, hit_places, hit_cats, hit_hash, hit_kw, item)
+                register(
+                    rk,
+                    hit_places,
+                    hit_cats[:3],
+                    hit_hash[:6],
+                    hit_kw[:30],
+                    {"src": "news", "title": title.strip(), "link": link.strip(), "places": hit_places[:6], "cats": hit_cats[:3]}
+                )
 
     # ---------- 2) PROXY SOCIAL ----------
     social_queries = []
     for rk in REGIONS.keys():
-        for term in [
-            "inundaciones", "sequía", "deslizamientos", "infraestructura vial",
-            "salud", "educación", "cambio climático", "corrupción", "inseguridad"
-        ]:
+        for term in ["inundaciones", "sequía", "deslizamientos", "infraestructura vial", "salud", "educación", "corrupción", "inseguridad"]:
             for platform, site in SOCIAL_SITES.items():
+                # IMPORTANTE: usar rk tal cual (incluye "la guajira")
                 q = f'{site} "{rk}" "{term}"'
-                social_queries.append((platform, q))
+                social_queries.append((platform, rk, term, q))
 
     social_queries = social_queries[:28]
 
-    for platform, query in social_queries:
+    for platform, rk_hint, term_hint, query in social_queries:
         feed_url = google_news_rss_url(query)
         for e in fetch_entries(feed_url)[:15]:
             title = getattr(e, "title", "") or ""
@@ -624,9 +662,15 @@ def main():
             text = f"{title} {summary}"
             text_n = normalize(text)
 
-            hit_regions = infer_regions_from_text(text_n, municipios_by_region, muni_to_region, region_aliases_flat)
+            hit_regions = infer_regions_from_text(text_n, municipios_by_region, region_aliases_flat)
             if not hit_regions:
-                continue
+                # fallback: si la query era de la región, asigna por hint
+                if rk_hint in REGIONS and rk_hint in text_n:
+                    hit_regions = [rk_hint]
+                elif rk_hint == "la guajira" and "guajira" in text_n:
+                    hit_regions = ["la guajira"]
+                else:
+                    continue
 
             hit_cats = classify_categories(text)
             hit_hash = extract_hashtags(text)
@@ -639,25 +683,24 @@ def main():
                 if not hit_places:
                     hit_places = [rk]
 
-                item = {
-                    "src": f"social:{platform}",
-                    "title": title.strip(),
-                    "link": link.strip(),
-                    "places": hit_places[:6],
-                    "cats": hit_cats[:3],
-                    "hashtags": hit_hash[:6],
-                }
-                register(rk, hit_places, hit_cats, hit_hash, hit_kw, item)
+                register(
+                    rk,
+                    hit_places,
+                    hit_cats[:3],
+                    hit_hash[:6],
+                    hit_kw[:30],
+                    {"src": f"social:{platform}", "title": title.strip(), "link": link.strip(), "places": hit_places[:6], "cats": hit_cats[:3], "term": term_hint}
+                )
 
-    # ---------- limpieza SEEN ----------
+    # ---------- Limpieza seen ----------
     cutoff = time.time() - (7 * 24 * 3600)
     seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
     save_json(SEEN_PATH, seen)
 
-    # ---------- history (por región) ----------
-    snapshot_regions = {}
+    # ---------- Snapshot history (por región) ----------
+    run_regions = {}
     for rk in REGIONS.keys():
-        snapshot_regions[rk] = {
+        run_regions[rk] = {
             "category": region_counts_category[rk],
             "place": region_counts_place[rk],
             "hashtag": region_counts_hashtag[rk],
@@ -665,24 +708,33 @@ def main():
         }
 
     history.setdefault("runs", [])
-    history["runs"].append({"ts": now_iso, "regions": snapshot_regions})
-    history["runs"] = history["runs"][-250:]
+    history["runs"].append({"ts_iso": now_iso, "ts_epoch": now_epoch, "regions": run_regions})
+    history["runs"] = history["runs"][-400:]
     save_json(HIST_PATH, history)
 
-    # ---------- trends ----------
+    # ---------- Trends (opcional, global) ----------
     trends = fetch_google_trends_signals()
 
-    # ---------- modo DAILY ----------
+    # =========================
+    # DAILY (por región)
+    # =========================
     if MODE == "DAILY":
+        # Ventana 24h en epoch (si no hay epoch, cae en iso)
+        since = now_epoch - 24 * 3600
+        last_runs = []
+        for r in history.get("runs", []):
+            te = r.get("ts_epoch")
+            if isinstance(te, (int, float)) and te >= since:
+                last_runs.append(r)
+
+        if not last_runs:
+            print("DAILY: Sin data 24h.")
+            return
+
         for rk, info in REGIONS.items():
-            label = info["label"]
-            chat_id = info["chat_id"]
-
-            # agrega últimas 96 corridas (~24h si corre cada 15 min; ajusta si tu cron es diferente)
-            last = history["runs"][-96:] if history["runs"] else []
-
             agg_cat, agg_place, agg_hash = {}, {}, {}
-            for r in last:
+
+            for r in last_runs:
                 reg = (r.get("regions") or {}).get(rk) or {}
                 for k, v in (reg.get("category") or {}).items():
                     agg_cat[k] = agg_cat.get(k, 0) + int(v)
@@ -695,138 +747,128 @@ def main():
             top_place = sorted(agg_place.items(), key=lambda x: x[1], reverse=True)[:8]
             top_hash = sorted(agg_hash.items(), key=lambda x: x[1], reverse=True)[:8]
 
+            volume = sum(agg_cat.values()) + sum(agg_place.values()) + sum(agg_hash.values())
+            icon, lvl = compute_intensity_two_colors(score_spikes=0, volume=volume, top_muni_count=len(agg_place))
+
             lines = []
-            lines.append(f"🟣 Pulso Electoral — Resumen Ejecutivo 24H — {label}\n")
-            lines.append("📌 Panorama sintético (últimas 24H):")
+            lines.append(f"🟣 Pulso Electoral | Reporte Ejecutivo (24H) — {info['label']}")
+            lines.append(f"{icon} Intensidad agregada: {lvl}  |  Volumen 24H: {volume}\n")
 
-            lines.append("\n📈 Categorías predominantes:")
-            for k, v in top_cat:
-                lines.append(f"- {human_category(k)}: {v}")
+            lines.append("📈 Principales categorías (24H):")
+            if top_cat:
+                for k, v in top_cat:
+                    lines.append(f"- {human_category(k)}: {v}")
+            else:
+                lines.append("- Sin señales categorizadas.")
 
-            lines.append("\n🗺️ Focos territoriales:")
-            for k, v in top_place:
-                lines.append(f"- {k.title()}: {v}")
+            lines.append("\n🗺️ Territorios con mayor conversación (24H):")
+            if top_place:
+                for k, v in top_place:
+                    lines.append(f"- {k.title()}: {v}")
+            else:
+                lines.append("- Sin territorios destacados.")
 
             if top_hash:
-                lines.append("\n#️⃣ Términos/hashtags recurrentes:")
-                for k, v in top_hash:
+                lines.append("\n#️⃣ Marcadores (hashtags/palabras) (24H):")
+                for k, v in top_hash[:8]:
                     lines.append(f"- {k}: {v}")
 
             if trends.get("spikes"):
-                lines.append("\n🔎 Señales nacionales (Google Trends) — repunte:")
+                lines.append("\n🔎 Google Trends (CO) — señales en aceleración:")
                 for s in trends["spikes"][:5]:
-                    lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
+                    lines.append(f"- {s['term']}: {s['last']} (prom {s['avg']:.1f})")
 
-            send_telegram(chat_id, "\n".join(lines))
+            send_telegram(info["chat_id"], "\n".join(lines))
+
+            if CHAT_ID_PREMIUM:
+                premium = "\n".join(lines) + "\n\n🧾 Nota premium: Este reporte integra señales de prensa + proxy social y prioriza verificación de fuentes para mitigar ruido y desinformación."
+                send_telegram(CHAT_ID_PREMIUM, premium)
 
         return
 
-    # ---------- modo ALERT ----------
+    # =========================
+    # ALERT (por región)
+    # =========================
     for rk, info in REGIONS.items():
-        label = info["label"]
-        chat_id = info["chat_id"]
-        items = region_items.get(rk, [])
+        cats_now = region_counts_category[rk]
+        place_now = region_counts_place[rk]
+        hash_now = region_counts_hashtag[rk]
+        items_now = region_items[rk]
 
-        if not items:
-            continue
+        volume = sum(cats_now.values()) + sum(place_now.values()) + sum(hash_now.values())
 
-        # Top actuales
-        top_cat_now = sorted(region_counts_category[rk].items(), key=lambda x: x[1], reverse=True)[:8]
-        top_place_now = sorted(region_counts_place[rk].items(), key=lambda x: x[1], reverse=True)[:8]
-        top_hash_now = sorted(region_counts_hashtag[rk].items(), key=lambda x: x[1], reverse=True)[:8]
+        spikes_cat = compute_spikes_region(cats_now, history.get("runs", []), rk, "category", min_count=2, factor=2.0)
+        spikes_place = compute_spikes_region(place_now, history.get("runs", []), rk, "place", min_count=2, factor=2.0)
+        spikes_hash = compute_spikes_region(hash_now, history.get("runs", []), rk, "hashtag", min_count=2, factor=2.0)
 
-        # spikes por región
-        spikes_cat = compute_spikes_region(region_counts_category[rk], history["runs"], rk, "category", min_count=2, factor=2.0)
-        spikes_place = compute_spikes_region(region_counts_place[rk], history["runs"], rk, "place", min_count=2, factor=2.0)
-        spikes_hash = compute_spikes_region(region_counts_hashtag[rk], history["runs"], rk, "hashtag", min_count=2, factor=2.0)
-
+        # score simple por número de spikes
         score_spikes = (1 if spikes_cat else 0) + (1 if spikes_place else 0) + (1 if spikes_hash else 0)
-        volume = len(items)
-        top_muni = pick_top_non_region_place(rk, top_place_now)
-        top_cat = top_cat_now[0] if top_cat_now else None
-        top_muni_count = len([p for p, _ in top_place_now if p != rk])
+        score_spikes += min(2, len(spikes_cat) // 3)
+        score_spikes += min(2, len(spikes_place) // 3)
 
-        icon, lvl = compute_intensity_two_colors(score_spikes, volume, top_muni_count)
+        top_cat_now = sorted(cats_now.items(), key=lambda x: x[1], reverse=True)[:8]
+        top_place_now = sorted(place_now.items(), key=lambda x: x[1], reverse=True)[:8]
 
-        # condición mínima para alertar (si no hay aceleración real, no spamear)
-        strong_signal = bool(spikes_cat or spikes_place or spikes_hash or volume >= 6)
+        # evidencia (máx 8 links)
+        evidence_links = [it.get("link", "") for it in items_now if it.get("link")]
+        evidence_links = [l for l in evidence_links if l][:8]
+
+        # gatillo de alerta (por región)
+        strong_signal = bool(spikes_cat or spikes_place or spikes_hash or len(items_now) >= 5 or volume >= 12 or trends.get("spikes"))
         if not strong_signal:
             continue
 
-        evidence_links = [it.get("link", "") for it in items[:8] if it.get("link")]
+        icon, lvl = compute_intensity_two_colors(score_spikes=score_spikes, volume=volume, top_muni_count=len(top_place_now))
+
         signature = make_alert_signature(
-            rk, spikes_cat, spikes_place, spikes_hash,
-            top_place_now, top_cat_now, evidence_links
+            region_key=rk,
+            spikes_cat=spikes_cat,
+            spikes_place=spikes_place,
+            spikes_hash=spikes_hash,
+            top_place=top_place_now,
+            top_cat=top_cat_now,
+            evidence_links=evidence_links,
         )
         if should_skip_repeated_alert(rk, signature, ttl_seconds=6 * 3600):
             continue
 
-        lines = build_premium_executive_summary(
-            region_label=label,
+        # construye mensaje premium
+        lines = build_executive_alert(
+            region_label=info["label"],
             icon=icon,
             lvl=lvl,
-            top_muni=top_muni,
-            top_cat=top_cat,
+            volume=volume,
+            top_places=top_place_now,
+            top_cats=top_cat_now,
             spikes_cat=spikes_cat,
             spikes_place=spikes_place,
-            volume=volume,
-            items=items
+            items=items_now
         )
 
-        # Evidencias
-        lines.append("📰 Evidencia operativa (muestra):")
-        for it in items[:6]:
-            cats = ", ".join([human_category(c) for c in it.get("cats", [])]) if it.get("cats") else "Sin categorización"
-            places = ", ".join([p.title() for p in it.get("places", [])]) if it.get("places") else "Sin territorio"
-            lines.append(f"• [{it.get('src','src')}] {it.get('title','')}")
-            lines.append(f"  ↳ {cats} | {places}")
-            if it.get("link"):
-                lines.append(f"  {it['link']}")
+        # evidencia al final (máx 8)
+        if items_now:
+            lines.append("\n🧾 Evidencia (selección):")
+            for it in items_now[:8]:
+                src = it.get("src", "fuente")
+                title = it.get("title", "").strip()
+                link = it.get("link", "").strip()
+                cats = ", ".join([human_category(c) for c in it.get("cats", [])]) if it.get("cats") else "sin clasificación"
+                places = ", ".join([p.title() for p in it.get("places", [])]) if it.get("places") else "sin territorio"
+                lines.append(f"• [{src}] {title}")
+                lines.append(f"  ({cats} | {places})")
+                if link:
+                    lines.append(f"  {link}")
 
-       send_telegram(chat_id, "\n".join(lines))
+        # envia SOLO a su región
+        send_telegram(info["chat_id"], "\n".join(lines))
 
-        # Premium opcional
+        # premium opcional
         if CHAT_ID_PREMIUM:
-            premium_pack = "\n".join(lines)
+            premium_pack = "\n".join(lines) + "\n\n🧾 Nota premium: Este informe prioriza validación de fuentes y consistencia narrativa para reducir riesgo de amplificación de desinformación."
             send_telegram(CHAT_ID_PREMIUM, premium_pack)
 
-    # ← ESTE return DEBE ESTAR AL MISMO NIVEL QUE EL FOR DE REGIONES
     return
 
 
 if __name__ == "__main__":
     main()
-            lines.append(
-                f"📣 Diagnóstico ejecutivo: Se registra conversación de **{lvl.lower()} intensidad** en **{top_muni[0].title()}** "
-                f"(menciones: {top_muni[1]}), asociada principalmente a **{cat_label.lower()}** (vector temático: “{theme}”).\n"
-            )
-        else:
-            lines.append(
-                f"📣 Diagnóstico ejecutivo: Se registra conversación de **{lvl.lower()} intensidad** en **{top_muni[0].title()}** "
-                f"(menciones: {top_muni[1]}), asociada principalmente a **{cat_label.lower()}**.\n"
-            )
-    elif top_muni:
-        lines.append(f"📣 Diagnóstico ejecutivo: El mayor foco conversacional se concentra en **{top_muni[0].title()}** (menciones: {top_muni[1]}).\n")
-
-    if spikes_cat or spikes_place:
-        lines.append("🔎 Señales en aceleración (vs. línea base):")
-        if spikes_cat:
-            lines.append("• Categorías:")
-            for k, c, base in spikes_cat[:4]:
-                lines.append(f"  - {human_category(k)}: {c} (prom. {base:.1f})")
-        if spikes_place:
-            lines.append("• Territorios:")
-            for k, c, base in spikes_place[:4]:
-                lines.append(f"  - {k.title()}: {c} (prom. {base:.1f})")
-        lines.append("")
-
-    lines.append("🧭 Recomendación táctica (comunicaciones):")
-    if lvl == "ALTA":
-        lines.append("• Activar respuesta inmediata: mensaje institucional breve + acciones verificables (qué, cuándo y quién ejecuta).")
-        lines.append("• Anticipar narrativa adversa: Q&A, vocería única y validación previa de datos antes de amplificar.")
-    else:
-        lines.append("• Monitoreo reforzado y posicionamiento preventivo: un pronunciamiento contextual y una señal de gestión.")
-        lines.append("• Identificar actor/fuente dominante en las próximas horas y ajustar tono y timing.")
-    lines.append("")
-
-    return lines
