@@ -166,7 +166,6 @@ history["runs"].append({
     "ts": now,
     "counts": run_counts
 })
-    # Mantener historia corta (últimos 60 runs)
     history["runs"] = history["runs"][-60:]
 
     # Limpieza seen (para no crecer infinito)
