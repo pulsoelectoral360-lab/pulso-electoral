@@ -166,7 +166,8 @@ history["runs"].append({
     "ts": now,
     "counts": run_counts
 })
-    history["runs"] = history["runs"][-60:]
+
+history["runs"] = history["runs"][-60:]
 
     # Limpieza seen (para no crecer infinito)
     # Borra items vistos hace > 7 días
