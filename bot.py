@@ -78,7 +78,7 @@ SOCIAL_SITES = {
 REGIONS = {
     "antioquia": {"label": "Antioquia", "chat_id": CHAT_ID_ANTIOQUIA},
     "caldas": {"label": "Caldas", "chat_id": CHAT_ID_CALDAS},
-    "la guajira": {"label": "La Guajira", "chat_id": CHAT_ID_GUAJIRA},
+    "guajira": {"label": "Guajira", "chat_id": CHAT_ID_GUAJIRA},
     "cesar": {"label": "Cesar (Valledupar)", "chat_id": CHAT_ID_CESAR},
 }
 
