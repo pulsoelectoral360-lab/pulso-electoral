@@ -1,16 +1,13 @@
-name: Pulso Electoral ALERT
+name: Radar ALERT
 
 on:
   schedule:
-    - cron: "30 12 * * *"  # 07:30 Colombia
-    - cron: "30 17 * * *"  # 12:30 Colombia
-    - cron: "30 0 * * *"   # 19:30 Colombia
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
 
@@ -20,6 +17,13 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run bot (ALERT)
         env:
-  MODE: DAILY
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID_ANTIOQUIA: ${{ secrets.CHAT_ID_ANTIOQUIA }}
+          CHAT_ID_CALDAS: ${{ secrets.CHAT_ID_CALDAS }}
+          CHAT_ID_GUAJIRA: ${{ secrets.CHAT_ID_GUAJIRA }}
+          CHAT_ID_CESAR: ${{ secrets.CHAT_ID_CESAR }}
+          MODE: ALERT
+          ENABLE_TRENDS: "1"
+        run: python bot.py
