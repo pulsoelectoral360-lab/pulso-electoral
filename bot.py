@@ -34,6 +34,11 @@ ENABLE_TRENDS = os.getenv("ENABLE_TRENDS", "1").strip() == "1"
 DATA_DIR = "data"
 SEEN_PATH = os.path.join(DATA_DIR, "seen.json")
 HIST_PATH = os.path.join(DATA_DIR, "history.json")
+
+# Cache municipios (evita pegarle a Wikipedia en cada run)
+MUN_CACHE_PATH = os.path.join(DATA_DIR, "municipios_cache.json")
+MUN_CACHE_TTL = 30 * 24 * 3600  # 30 días
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
@@ -198,8 +203,9 @@ def build_terms_for_trends():
         "educación",
     ]
 
+
 # =========================
-# MUNICIPIOS (TODOS) - automático desde Wikipedia
+# MUNICIPIOS (TODOS) - automático desde Wikipedia + cache
 # =========================
 WIKI_MUN_URLS = {
     "antioquia": "https://es.wikipedia.org/wiki/Anexo:Municipios_de_Antioquia",
@@ -224,27 +230,25 @@ def fetch_municipios_from_wikipedia(region_key: str):
             cols = r.select("td")
             if not cols:
                 continue
-            # normalmente el municipio está en el 1er td o tiene un <a>
             cell = cols[0].get_text(" ", strip=True)
             cell = normalize(cell)
-            # filtra vacíos
             if cell and cell not in municipios:
                 municipios.append(cell)
 
-    # Algunas tablas meten textos raros; filtrado básico
     municipios = [m for m in municipios if len(m) >= 3 and not m.startswith("nota")]
     return municipios
 
 def get_all_place_terms():
-    # --- Cargar cache si existe y está vigente ---
+    # cache
     cache = load_json(MUN_CACHE_PATH, default={"ts": 0, "data": {}})
-    if time.time() - cache.get("ts", 0) < MUN_CACHE_TTL and cache.get("data"):
+    fresh = (time.time() - cache.get("ts", 0)) < MUN_CACHE_TTL
+
+    if fresh and cache.get("data"):
         data = cache["data"]
     else:
         data = {}
         for rkey in REGIONS.keys():
             data[rkey] = fetch_municipios_from_wikipedia(rkey)
-
         save_json(MUN_CACHE_PATH, {"ts": time.time(), "data": data})
 
     place_terms = set()
@@ -252,7 +256,6 @@ def get_all_place_terms():
         place_terms.add(normalize(rkey))
         for m in data.get(rkey, []):
             place_terms.add(normalize(m))
-
     return place_terms
 
 
@@ -260,9 +263,6 @@ def get_all_place_terms():
 # GOOGLE TRENDS (gratis)
 # =========================
 def fetch_google_trends_signals():
-    """
-    Devuelve dict con señales de aumento fuerte (si se puede).
-    """
     signals = {"spikes": [], "raw": {}}
     if not ENABLE_TRENDS or TrendReq is None:
         return signals
@@ -275,7 +275,6 @@ def fetch_google_trends_signals():
         if df is None or df.empty:
             return signals
 
-        # mide "último valor vs promedio" para cada término
         for term in terms:
             series = df[term]
             last = float(series.iloc[-1])
@@ -284,7 +283,6 @@ def fetch_google_trends_signals():
             if last >= 2 * avg and last >= 20:
                 signals["spikes"].append({"term": term, "last": last, "avg": avg})
     except Exception:
-        # si falla Trends, no tumba el bot
         return signals
 
     return signals
@@ -294,26 +292,24 @@ def fetch_google_trends_signals():
 # CORE
 # =========================
 def main():
-    # Persistencia
     seen = load_json(SEEN_PATH, default={"items": {}})
     history = load_json(HIST_PATH, default={"runs": []})
 
     place_terms = get_all_place_terms()
 
-    # Keywords generales = lugares + gobierno + términos de categorías (flatten)
     category_terms = []
     for terms in CATEGORIES.values():
         category_terms.extend([normalize(t) for t in terms])
+
     keywords = list(place_terms) + [normalize(k) for k in GOV_KEYWORDS] + category_terms
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Conteos del run
     counts_keyword = {}
     counts_category = {}
     counts_place = {}
     counts_hashtag = {}
-    new_items = []  # “novedades” (news + proxy social)
+    new_items = []
 
     def register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords):
         for k in hit_keywords:
@@ -339,14 +335,12 @@ def main():
             text = f"{title} {summary}"
             text_n = normalize(text)
 
-            # filtra: debe mencionar al menos 1 lugar o 1 región target
             hit_place = [p for p in place_terms if p in text_n]
             if not hit_place:
                 continue
 
             hit_cats = classify_categories(text)
             if not hit_cats:
-                # si no cae en categorías, igual puede ser relevante por gobierno/contratación
                 if not any(normalize(g) in text_n for g in GOV_KEYWORDS):
                     continue
 
@@ -354,23 +348,25 @@ def main():
             hit_keywords = [k for k in keywords if k in text_n]
 
             seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": "news"}
-            new_items.append({"src": "news", "title": title.strip(), "link": link.strip(),
-                              "places": hit_place[:4], "cats": hit_cats[:3], "hashtags": hit_hashtags[:5]})
+            new_items.append({
+                "src": "news",
+                "title": title.strip(),
+                "link": link.strip(),
+                "places": hit_place[:4],
+                "cats": hit_cats[:3],
+                "hashtags": hit_hashtags[:5],
+            })
 
             register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords)
 
     # ---------- 2) PROXY SOCIAL (Google News RSS + site:x.com etc) ----------
-    # Construimos queries por región + categorías clave (para detectar conversación web)
     social_queries = []
     for rkey in REGIONS.keys():
-        for cat_terms in [
-            "inundaciones", "sequía", "deslizamientos", "infraestructura vial", "salud", "educación", "cambio climático"
-        ]:
+        for cat_terms in ["inundaciones", "sequía", "deslizamientos", "infraestructura vial", "salud", "educación", "cambio climático"]:
             for platform, site in SOCIAL_SITES.items():
                 q = f'{site} "{rkey}" "{cat_terms}"'
                 social_queries.append((platform, q))
 
-    # limita para no exceder (gratis)
     social_queries = social_queries[:24]
 
     for platform, query in social_queries:
@@ -396,8 +392,14 @@ def main():
             hit_keywords = [k for k in keywords if k in text_n]
 
             seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": f"social:{platform}"}
-            new_items.append({"src": f"social:{platform}", "title": title.strip(), "link": link.strip(),
-                              "places": hit_place[:4], "cats": hit_cats[:3], "hashtags": hit_hashtags[:5]})
+            new_items.append({
+                "src": f"social:{platform}",
+                "title": title.strip(),
+                "link": link.strip(),
+                "places": hit_place[:4],
+                "cats": hit_cats[:3],
+                "hashtags": hit_hashtags[:5],
+            })
 
             register_hit(hit_place, hit_cats, hit_hashtags, hit_keywords)
 
@@ -407,20 +409,14 @@ def main():
     save_json(SEEN_PATH, seen)
 
     # ---------- History ----------
-    run_snapshot = {
-        "ts": now,
-        "keyword": counts_keyword,
-        "category": counts_category,
-        "place": counts_place,
-        "hashtag": counts_hashtag,
-    }
+    run_snapshot = {"ts": now, "keyword": counts_keyword, "category": counts_category, "place": counts_place, "hashtag": counts_hashtag}
     history["runs"].append(run_snapshot)
-    history["runs"] = history["runs"][-200:]  # guarda más para tendencias
+    history["runs"] = history["runs"][-200:]
     save_json(HIST_PATH, history)
 
     # ---------- Tendencias (picos) ----------
-    # Promedio simple últimos 20 runs
     prev = history["runs"][-21:-1]
+
     def avg_map(key):
         acc = {}
         if not prev:
@@ -451,16 +447,13 @@ def main():
     spikes_place = spikes(counts_place, avg_place, min_count=2)
     spikes_hashtag = spikes(counts_hashtag, avg_hashtag, min_count=2)
 
-    # Google Trends
     trends = fetch_google_trends_signals()
 
     # ---------- MODOS ----------
     if MODE == "DAILY":
-        # resumen 24h (aprox): últimos 96 runs si corre cada 15 min (ajusta si cambias cron)
-        last = history["runs"][-96:] if len(history["runs"]) >= 1 else []
-        agg_cat = {}
-        agg_place = {}
-        agg_hash = {}
+        last = history["runs"][-96:] if history["runs"] else []
+        agg_cat, agg_place, agg_hash = {}, {}, {}
+
         for r in last:
             for k, v in r.get("category", {}).items():
                 agg_cat[k] = agg_cat.get(k, 0) + int(v)
@@ -481,7 +474,7 @@ def main():
         for k, v in top_cat:
             lines.append(f"- {k}: {v}")
 
-        lines.append("\n🗺️ Lugares top (municipios/deptos):")
+        lines.append("\n🗺️ Lugares top:")
         for k, v in top_place:
             lines.append(f"- {k}: {v}")
 
@@ -498,7 +491,7 @@ def main():
         send_telegram("\n".join(lines))
         return
 
-    # ALERT: manda solo si hay señales fuertes
+    # ALERT
     strong_signal = bool(spikes_category or spikes_place or spikes_hashtag or trends.get("spikes") or len(new_items) >= 5)
     if not strong_signal:
         print("Sin señales fuertes (no alerta).")
