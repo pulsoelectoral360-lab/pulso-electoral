@@ -180,19 +180,18 @@ save_json(HIST_PATH, history)
 # -------- ALERTAS --------
 if not new_alerts:
     return
-        # No spamear: si quieres “heartbeat” diario, lo hacemos luego
-        return
 
-    # Tendencias: comparar este run vs promedio de runs anteriores
-    # Promedio simple (últimos 20 runs previos)
-    prev_runs = history["runs"][-21:-1]
-    avg = {}
-    if prev_runs:
-        for r in prev_runs:
-            for k, c in r.get("counts", {}).items():
-                avg[k] = avg.get(k, 0) + c
-        for k in list(avg.keys()):
-            avg[k] = avg[k] / max(1, len(prev_runs))
+# Tendencias: comparar este run vs promedio
+prev_runs = history["runs"][-21:-1]
+avg = {}
+
+if prev_runs:
+    for r in prev_runs:
+        for k, c in r.get("counts", {}).items():
+            avg[k] = avg.get(k, 0) + c
+
+    for k in avg:
+        avg[k] = avg[k] / len(prev_runs)
 
     # Detectar “picos”: count >= 3 y 2x el promedio
     spikes = []
