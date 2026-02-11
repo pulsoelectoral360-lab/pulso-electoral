@@ -23,6 +23,9 @@ BASE_KEYWORDS = [
     # Núcleo (tu foco)
     "cámara de representantes",
     "antioquia",
+    "la guajira",
+    "caldas",
+    "valledupar",
     "escándalo",
     "corrupción",
     "inseguridad",
@@ -39,7 +42,13 @@ BASE_KEYWORDS = [
 # Google News RSS: si quieres, aquí agregas queries puntuales
 GOOGLE_NEWS_QUERIES = [
     "Cámara de Representantes Antioquia",
+    "Cámara de Representantes caldas",
+    "Cámara de Representantes valledupar",
+    "Cámara de Representantes la guajira",
     "corrupción Antioquia",
+    "corrupción valledupar",
+    "corrupción caldas",
+    "corrupción la guajira",
     "inseguridad Medellín",
     "Congreso Colombia reforma",
 ]
@@ -175,11 +184,11 @@ cutoff = time.time() - (7 * 24 * 3600)
 seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
 
 save_json(SEEN_PATH, seen)
-save_json(HIST_PATH, history)
+        save_json(HIST_PATH, history)
 
-# -------- ALERTAS --------
-if not new_alerts:
-    return
+        # -------- ALERTAS --------
+        if not new_alerts:
+            return
 
 # Tendencias: comparar este run vs promedio
 prev_runs = history["runs"][-21:-1]
