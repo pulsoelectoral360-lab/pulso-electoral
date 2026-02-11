@@ -242,8 +242,8 @@ spikes = sorted(spikes, key=lambda x: x[1], reverse=True)[:6]
 
 # ========= ALERT MODE =========
 if MODE == "ALERT":
-    if not spikes:
-        return
+   if not spikes:
+    print("No hay picos detectados")
 
     lines = []
     lines.append("🟣 Pulso Electoral — ALERTA (pico detectado)")
