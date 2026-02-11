@@ -566,3 +566,356 @@ def main():
 
     category_terms = []
     for terms in CATEGORIES.va
+
+def main():
+    seen = load_json(SEEN_PATH, default={"items": {}})
+    history = load_json(HIST_PATH, default={"runs": []})
+
+    municipios_by_region, muni_to_region, region_aliases_flat = load_places_and_map()
+
+    category_terms = []
+    for terms in CATEGORIES.values():
+        category_terms.extend([normalize(t) for t in terms])
+    keywords_global = category_terms + [normalize(k) for k in GOV_KEYWORDS]
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    # por región
+    region_counts_category = {rk: {} for rk in REGIONS.keys()}
+    region_counts_place = {rk: {} for rk in REGIONS.keys()}
+    region_counts_hashtag = {rk: {} for rk in REGIONS.keys()}
+    region_items = {rk: [] for rk in REGIONS.keys()}  # evidencias
+
+    def bump(d: Dict[str, int], k: str, n: int = 1):
+        d[k] = d.get(k, 0) + n
+
+    def register(rk: str, hit_places: List[str], hit_cats: List[str], hit_hash: List[str], item: dict):
+        for c in hit_cats:
+            bump(region_counts_category[rk], c)
+        for p in hit_places:
+            bump(region_counts_place[rk], p)
+        for h in hit_hash:
+            bump(region_counts_hashtag[rk], h)
+        region_items[rk].append(item)
+
+    # ---------- 1) NOTICIAS ----------
+    for feed in NEWS_FEEDS:
+        for e in fetch_entries(feed)[:40]:
+            title = getattr(e, "title", "") or ""
+            link = getattr(e, "link", "") or ""
+            summary = getattr(e, "summary", "") or getattr(e, "description", "") or ""
+
+            fp = item_fingerprint(title, link)
+            if fp in seen["items"]:
+                continue
+
+            text = f"{title} {summary}"
+            text_n = normalize(text)
+
+            hit_regions = infer_regions_from_text(text_n, municipios_by_region, muni_to_region, region_aliases_flat)
+            if not hit_regions:
+                continue
+
+            hit_cats = classify_categories(text)
+
+            # si no cae en categorías, exige gov keyword (para no meter basura)
+            if not hit_cats and not any(normalize(g) in text_n for g in GOV_KEYWORDS):
+                continue
+
+            hit_hash = extract_hashtags(text)
+
+            seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": "news"}
+
+            for rk in hit_regions:
+                hit_places = extract_places_for_region(text_n, rk, municipios_by_region)
+                if not hit_places:
+                    hit_places = [rk]
+
+                item = {
+                    "src": "news",
+                    "title": title.strip(),
+                    "link": link.strip(),
+                    "places": hit_places[:6],
+                    "cats": hit_cats[:3],
+                    "hashtags": hit_hash[:6],
+                }
+                register(rk, hit_places, hit_cats, hit_hash, item)
+
+    # ---------- 2) PROXY SOCIAL (gratis) ----------
+    social_queries = []
+    for rk in REGIONS.keys():
+        for term in [
+            "inundaciones", "sequía", "deslizamientos", "infraestructura vial",
+            "salud", "educación", "cambio climático", "corrupción", "inseguridad"
+        ]:
+            for platform, site in SOCIAL_SITES.items():
+                q = f'{site} "{rk}" "{term}"'
+                social_queries.append((platform, q))
+
+    social_queries = social_queries[:28]
+
+    for platform, query in social_queries:
+        feed_url = google_news_rss_url(query)
+        for e in fetch_entries(feed_url)[:15]:
+            title = getattr(e, "title", "") or ""
+            link = getattr(e, "link", "") or ""
+            summary = getattr(e, "summary", "") or getattr(e, "description", "") or ""
+
+            fp = item_fingerprint(title, link)
+            if fp in seen["items"]:
+                continue
+
+            text = f"{title} {summary}"
+            text_n = normalize(text)
+
+            hit_regions = infer_regions_from_text(text_n, municipios_by_region, muni_to_region, region_aliases_flat)
+            if not hit_regions:
+                continue
+
+            hit_cats = classify_categories(text)
+            hit_hash = extract_hashtags(text)
+
+            seen["items"][fp] = {"ts": time.time(), "title": title, "link": link, "src": f"social:{platform}"}
+
+            for rk in hit_regions:
+                hit_places = extract_places_for_region(text_n, rk, municipios_by_region)
+                if not hit_places:
+                    hit_places = [rk]
+
+                item = {
+                    "src": f"social:{platform}",
+                    "title": title.strip(),
+                    "link": link.strip(),
+                    "places": hit_places[:6],
+                    "cats": hit_cats[:3],
+                    "hashtags": hit_hash[:6],
+                }
+                register(rk, hit_places, hit_cats, hit_hash, item)
+
+    # ---------- Limpieza seen ----------
+    cutoff = time.time() - (7 * 24 * 3600)
+    seen["items"] = {k: v for k, v in seen["items"].items() if v.get("ts", 0) >= cutoff}
+    save_json(SEEN_PATH, seen)
+
+    # ---------- Trends ----------
+    trends = fetch_google_trends_signals()
+
+    # ---------- Guardar history por región ----------
+    run_snapshot = {"ts": now_iso, "regions": {}}
+    for rk in REGIONS.keys():
+        run_snapshot["regions"][rk] = {
+            "category": region_counts_category[rk],
+            "place": region_counts_place[rk],
+            "hashtag": region_counts_hashtag[rk],
+        }
+    history.setdefault("runs", [])
+    history["runs"].append(run_snapshot)
+    history["runs"] = history["runs"][-350:]
+    save_json(HIST_PATH, history)
+
+    # ========= DAILY (por región) =========
+    if MODE == "DAILY":
+        window_start = now - timedelta(hours=8)
+
+        def parse_ts(s: str) -> Optional[datetime]:
+            try:
+                return datetime.fromisoformat(s.replace("Z", "+00:00"))
+            except Exception:
+                return None
+
+        runs_window = []
+        for r in history["runs"]:
+            t = parse_ts(r.get("ts", ""))
+            if t and t >= window_start:
+                runs_window.append(r)
+
+        for rk, info in REGIONS.items():
+            chat_id = info["chat_id"]
+            label = info["label"]
+
+            agg_cat, agg_place, agg_hash = {}, {}, {}
+            for r in runs_window:
+                reg = (r.get("regions") or {}).get(rk) or {}
+                for k, v in (reg.get("category") or {}).items():
+                    agg_cat[k] = agg_cat.get(k, 0) + int(v)
+                for k, v in (reg.get("place") or {}).items():
+                    agg_place[k] = agg_place.get(k, 0) + int(v)
+                for k, v in (reg.get("hashtag") or {}).items():
+                    agg_hash[k] = agg_hash.get(k, 0) + int(v)
+
+            top_cat = sorted(agg_cat.items(), key=lambda x: x[1], reverse=True)[:10]
+            top_place = sorted(agg_place.items(), key=lambda x: x[1], reverse=True)[:10]
+            top_hash = sorted(agg_hash.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            top_muni = pick_top_non_region_place(rk, top_place)
+            top_cat_main = top_cat[0] if top_cat else None
+
+            volume = sum(agg_cat.values()) + sum(agg_place.values()) + sum(agg_hash.values())
+            # daily no usa spikes; intensidad por volumen/municipio
+            icon, lvl = compute_intensity_two_colors(score_spikes=0, volume=volume, top_muni_count=(top_muni[1] if top_muni else 0))
+
+            lines = []
+            lines.append(f"🟣 Pulso Electoral — Reporte Ejecutivo (8h) — {label}")
+            lines.append(f"{icon} Intensidad: {lvl}  |  Volumen (señales): {volume}\n")
+
+            if top_muni and top_cat_main:
+                cat_label = human_category(top_cat_main[0])
+                lines.append(f"📍 Foco territorial: **{top_muni[0].title()}** (menciones: {top_muni[1]}), con predominio temático en **{cat_label.lower()}**.\n")
+            elif top_muni:
+                lines.append(f"📍 Foco territorial: **{top_muni[0].title()}** (menciones: {top_muni[1]}).\n")
+
+            lines.append("📈 Temas con mayor tracción:")
+            if top_cat:
+                for k, v in top_cat[:8]:
+                    lines.append(f"- {human_category(k)}: {v}")
+            else:
+                lines.append("- (sin señales relevantes)")
+
+            lines.append("\n🗺️ Territorios más mencionados:")
+            if top_place:
+                for k, v in top_place[:8]:
+                    lines.append(f"- {k.title()}: {v}")
+            else:
+                lines.append("- (sin señales relevantes)")
+
+            if top_hash:
+                lines.append("\n#️⃣ Palabras/hashtags recurrentes:")
+                for k, v in top_hash[:8]:
+                    lines.append(f"- {k}: {v}")
+
+            if trends.get("spikes"):
+                lines.append("\n🔎 Señales nacionales (Google Trends, CO):")
+                for s in trends["spikes"][:5]:
+                    lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
+
+            send_telegram(chat_id, "\n".join(lines))
+
+        # Premium DAILY (opcional)
+        if CHAT_ID_PREMIUM:
+            lines = []
+            lines.append("💎 PREMIUM — Pulso Electoral (Reporte Ejecutivo 8h)")
+            lines.append("Comparativo de intensidad y volumen por región:\n")
+            rows = []
+            for rk in REGIONS.keys():
+                # solo del agregado de ventana
+                # (si quieres exactitud por ventana para premium, se puede ampliar)
+                reg_now = run_snapshot["regions"][rk]
+                vol = sum((reg_now.get("category") or {}).values()) + sum((reg_now.get("place") or {}).values()) + sum((reg_now.get("hashtag") or {}).values())
+                rows.append((rk, vol))
+            rows.sort(key=lambda x: x[1], reverse=True)
+            for rk, vol in rows:
+                lines.append(f"- {REGIONS[rk]['label']}: {vol}")
+
+            if trends.get("raw"):
+                lines.append("\nGoogle Trends RAW (último vs avg):")
+                for term, d in list(trends["raw"].items())[:5]:
+                    lines.append(f"- {term}: {d['last']} vs {d['avg']:.1f}")
+
+            send_telegram(CHAT_ID_PREMIUM, "\n".join(lines))
+
+        return
+
+    # ========= ALERT (por región) =========
+    for rk, info in REGIONS.items():
+        chat_id = info["chat_id"]
+        label = info["label"]
+
+        cur_cat = region_counts_category[rk]
+        cur_place = region_counts_place[rk]
+        cur_hash = region_counts_hashtag[rk]
+        items = region_items[rk]
+
+        # nada que reportar
+        if not items:
+            continue
+
+        sp_cat = compute_spikes_region(cur_cat, history["runs"], rk, "category", min_count=2, factor=2.0)
+        sp_place = compute_spikes_region(cur_place, history["runs"], rk, "place", min_count=2, factor=2.0)
+        sp_hash = compute_spikes_region(cur_hash, history["runs"], rk, "hashtag", min_count=2, factor=2.0)
+
+        top_cat_now = sorted(cur_cat.items(), key=lambda x: x[1], reverse=True)[:8]
+        top_place_now = sorted(cur_place.items(), key=lambda x: x[1], reverse=True)[:8]
+        top_hash_now = sorted(cur_hash.items(), key=lambda x: x[1], reverse=True)[:8]
+
+        top_muni = pick_top_non_region_place(rk, top_place_now)
+        top_muni_count = top_muni[1] if top_muni else 0
+
+        score_spikes = len(sp_cat) + len(sp_place) + len(sp_hash)
+        volume = sum(cur_cat.values()) + sum(cur_place.values()) + sum(cur_hash.values())
+
+        icon, lvl = compute_intensity_two_colors(score_spikes, volume, top_muni_count)
+
+        # filtro mínimo para que ALERT sea serio (evita ruido inútil):
+        # manda si: >=3 evidencias, o hay picos, o hay spikes de Trends
+        strong_signal = bool(len(items) >= 3 or score_spikes >= 1 or trends.get("spikes"))
+        if not strong_signal:
+            continue
+
+        evidence_links = [it.get("link", "") for it in items if it.get("link")][:8]
+        sig = make_alert_signature(rk, sp_cat, sp_place, sp_hash, top_place_now, top_cat_now, evidence_links)
+        if should_skip_repeated_alert(rk, sig, ttl_seconds=6 * 3600):
+            print(f"[{rk}] alerta repetida (skip).")
+            continue
+
+        top_cat_main = top_cat_now[0] if top_cat_now else None
+
+        # --- Redacción premium ---
+        lines = build_premium_executive_summary(
+            region_label=label,
+            icon=icon,
+            lvl=lvl,
+            top_muni=top_muni,
+            top_cat=top_cat_main,
+            spikes_cat=sp_cat,
+            spikes_place=sp_place,
+            volume=volume,
+            items=items
+        )
+
+        # Hashtags/keywords (si hay)
+        if top_hash_now:
+            lines.append("📌 Señales de lenguaje (hashtags/palabras):")
+            for k, v in top_hash_now[:6]:
+                lines.append(f"- {k}: {v}")
+            lines.append("")
+
+        # Evidencia
+        lines.append("🗞️ Evidencia (muestra curada, máx. 8):")
+        for it in items[:8]:
+            cats = ", ".join([human_category(c) for c in (it.get("cats") or [])]) if it.get("cats") else "Sin categoría"
+            places = ", ".join([(p.title() if p else "") for p in (it.get("places") or [])]) if it.get("places") else "Sin territorio"
+            lines.append(f"• [{it['src']}] {it['title']}\n  ({cats} | {places})\n  {it['link']}")
+
+        # Señal nacional opcional
+        if trends.get("spikes"):
+            lines.append("\n🔎 Contexto nacional (Google Trends, CO):")
+            for s in trends["spikes"][:5]:
+                lines.append(f"- {s['term']}: {s['last']} (avg {s['avg']:.1f})")
+
+        send_telegram(chat_id, "\n".join(lines))
+
+        # Premium (opcional): versión extendida
+        if CHAT_ID_PREMIUM:
+            plines = []
+            plines.append(f"💎 PREMIUM — Informe Extendido — {label}")
+            plines.append(f"{icon} Intensidad: {lvl}  |  Volumen: {volume}\n")
+            if top_muni:
+                plines.append(f"Foco territorial dominante: {top_muni[0].title()} (menciones: {top_muni[1]}).")
+            if top_cat_main:
+                plines.append(f"Vector temático dominante: {human_category(top_cat_main[0])}.\n")
+
+            plines.append("Evidencia ampliada (máx. 10):")
+            for it in items[:10]:
+                plines.append(f"• {it['title']}\n  {it['link']}")
+
+            if trends.get("raw"):
+                plines.append("\nGoogle Trends RAW (último vs avg):")
+                for term, d in list(trends["raw"].items())[:5]:
+                    plines.append(f"- {term}: {d['last']} vs {d['avg']:.1f}")
+
+            send_telegram(CHAT_ID_PREMIUM, "\n".join(plines))
+
+
+if __name__ == "__main__":
+    main()
