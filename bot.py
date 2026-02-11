@@ -252,15 +252,12 @@ if MODE == "ALERT":
         lines.append(f"- {k}: {c} (prom {base:.1f})")
 
 if not new_items:
-      print("No hay noticias nuevas")
+    print("No hay noticias nuevas")
 else:
     lines.append("\n📰 Noticias nuevas:")
     for a in new_items[:10]:
         tags = ", ".join(a["hits"][:3])
-        lines.append(f"• {a['title']}\n  ({tags})\n  {a['link']}")
-
-    send_telegram("\n".join(lines))
-    return
+        lines.append(f"• {a['title']}\n ({tags})\n {a['link']}")
 
 # ========= DAILY MODE =========
 if MODE == "DAILY":
