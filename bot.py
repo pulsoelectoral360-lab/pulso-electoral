@@ -414,7 +414,7 @@ def main():
                     "link": link.strip(),
                     "places": hit_places[:4],
                     "cats": hit_cats[:3],
-                    "hashtags": hit_hashtags[:5]:
+                    "hashtags": hit_hashtags[:5],
                 }
                 register_for_region(rkey, hit_places, hit_cats, hit_hashtags, hit_keywords, item=item)
 
