@@ -236,13 +236,23 @@ def fetch_municipios_from_wikipedia(region_key: str):
     return municipios
 
 def get_all_place_terms():
-    # Construye un set grande: departamento + todos sus municipios
+    # --- Cargar cache si existe y está vigente ---
+    cache = load_json(MUN_CACHE_PATH, default={"ts": 0, "data": {}})
+    if time.time() - cache.get("ts", 0) < MUN_CACHE_TTL and cache.get("data"):
+        data = cache["data"]
+    else:
+        data = {}
+        for rkey in REGIONS.keys():
+            data[rkey] = fetch_municipios_from_wikipedia(rkey)
+
+        save_json(MUN_CACHE_PATH, {"ts": time.time(), "data": data})
+
     place_terms = set()
     for rkey in REGIONS.keys():
         place_terms.add(normalize(rkey))
-        municipios = fetch_municipios_from_wikipedia(rkey)
-        for m in municipios:
+        for m in data.get(rkey, []):
             place_terms.add(normalize(m))
+
     return place_terms
 
 
