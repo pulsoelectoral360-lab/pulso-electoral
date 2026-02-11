@@ -223,6 +223,7 @@ def main():
 MODE = os.getenv("MODE", "ALERT").strip().upper()
 
 # baseline promedio (últimos 20 runs anteriores)
+history = load_history()
 prev = history["runs"][-21:-1]
 avg = {}
 if prev:
