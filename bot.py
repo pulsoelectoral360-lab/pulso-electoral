@@ -783,19 +783,19 @@ def main():
             if it.get("link"):
                 lines.append(f"  {it['link']}")
 
-        send_telegram(chat_id, "\n".join(lines))
+       send_telegram(chat_id, "\n".join(lines))
 
-        # Premium opcional: mismo informe pero agregado (si tienes ese chat)
+        # Premium opcional
         if CHAT_ID_PREMIUM:
             premium_pack = "\n".join(lines)
             send_telegram(CHAT_ID_PREMIUM, premium_pack)
 
+    # ← ESTE return DEBE ESTAR AL MISMO NIVEL QUE EL FOR DE REGIONES
     return
 
 
 if __name__ == "__main__":
     main()
-        if theme:
             lines.append(
                 f"📣 Diagnóstico ejecutivo: Se registra conversación de **{lvl.lower()} intensidad** en **{top_muni[0].title()}** "
                 f"(menciones: {top_muni[1]}), asociada principalmente a **{cat_label.lower()}** (vector temático: “{theme}”).\n"
